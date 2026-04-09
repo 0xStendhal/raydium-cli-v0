@@ -4,28 +4,16 @@ CLI tool for interacting with Raydium on Solana -- swap, manage CLMM/CPMM positi
 
 ## Install
 
+```bash
+npm install -g github:0xStendhal/raydium-cli-v0
 ```
-npm install -g @zoidz123/raydium-cli
-```
 
-## Install Skills (Codex or Claude)
-
-Copy the Raydium skills into your agent's local skills directory.
-
-For Codex:
+Or install from a local checkout:
 
 ```bash
-mkdir -p ~/.codex/skills
-git clone https://github.com/zoidz123/raydium-cli.git /tmp/raydium-cli
-cp -R /tmp/raydium-cli/skills/* ~/.codex/skills/
-```
-
-For Claude Code:
-
-```bash
-mkdir -p ~/.claude/skills
-git clone https://github.com/zoidz123/raydium-cli.git /tmp/raydium-cli
-cp -R /tmp/raydium-cli/skills/* ~/.claude/skills/
+npm install
+npm run build
+npm link
 ```
 
 ## Quick Start
