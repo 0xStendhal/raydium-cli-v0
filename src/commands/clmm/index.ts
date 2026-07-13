@@ -14,7 +14,7 @@ import BN from "bn.js";
 import { loadConfig } from "../../lib/config-manager";
 import { getConnection } from "../../lib/connection";
 import { decryptWallet, getWalletPublicKey, resolveWalletIdentifier } from "../../lib/wallet-manager";
-import { promptConfirm, promptPassword } from "../../lib/prompt";
+import { promptConfirm, promptIfMissing, promptNumberIfMissing, promptPassword } from "../../lib/prompt";
 import { isJsonOutput, logError, logErrorWithDebug, logInfo, logJson, logSuccess, withSpinner } from "../../lib/output";
 import { loadRaydium } from "../../lib/raydium-client";
 import {
@@ -32,7 +32,8 @@ import {
   priceToAlignedTick
 } from "../../lib/clmm-utils";
 import { getTokenPrices } from "../../lib/token-price";
-import { addRichHelp, NON_INTERACTIVE_HELP, PASSWORD_AUTH_HELP } from "../../lib/help";
+import { addRichHelp, AUTOMATION_HELP, PASSWORD_AUTH_HELP } from "../../lib/help";
+import { serializeCsv, writeExport } from "../../lib/csv";
 
 const VALID_CLMM_PROGRAM_IDS = new Set([
   CLMM_PROGRAM_ID.toBase58(),
@@ -42,6 +43,88 @@ const VALID_CLMM_PROGRAM_IDS = new Set([
 const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
 const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+
+type PositionRewardReport = {
+  mint: string;
+  symbol: string;
+  amountOwed: string;
+  amountOwedRaw: string;
+  decimals: number | null;
+};
+
+type PositionReport = {
+  nftMint: string;
+  poolId: string;
+  tickLower: number;
+  tickUpper: number;
+  currentTick: number;
+  priceLower: string;
+  priceUpper: string;
+  currentPrice: string;
+  inRange: boolean;
+  liquidity: string;
+  amount0: string;
+  amount1: string;
+  symbol0: string;
+  symbol1: string;
+  feesOwed0: string;
+  feesOwed1: string;
+  feesOwed0Raw: string;
+  feesOwed1Raw: string;
+  rewards: PositionRewardReport[];
+  usdValue?: number;
+};
+
+function rawToUiAmount(value: unknown, decimals: number): string {
+  const raw = value && typeof (value as { toString?: unknown }).toString === "function"
+    ? String(value)
+    : "0";
+  return new Decimal(raw).div(new Decimal(10).pow(decimals)).toString();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function addressString(value: any): string {
+  if (typeof value === "string") return value;
+  if (typeof value?.address === "string") return value.address;
+  if (typeof value?.toBase58 === "function") return value.toBase58();
+  return "unknown";
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildRewardReports(position: any, poolInfo: any): PositionRewardReport[] {
+  const positionRewards = Array.isArray(position.rewardInfos) ? position.rewardInfos : [];
+  const poolRewards = Array.isArray(poolInfo?.rewardInfos) ? poolInfo.rewardInfos : [];
+  const defaultRewards = Array.isArray(poolInfo?.rewardDefaultInfos)
+    ? poolInfo.rewardDefaultInfos
+    : [];
+
+  return positionRewards
+    .map((reward: any, index: number) => {
+      const poolReward = poolRewards[index] ?? {};
+      const defaultReward = defaultRewards[index] ?? {};
+      const mint = addressString(
+        defaultReward.mint?.address ?? defaultReward.mint ?? poolReward.tokenMint
+      );
+      const decimalsValue =
+        defaultReward.mint?.decimals ?? defaultReward.decimals ?? poolReward.decimals;
+      const decimals = decimalsValue === undefined ? null : Number(decimalsValue);
+      const amountOwedRaw = reward.rewardAmountOwed?.toString?.() ?? "0";
+      return {
+        mint,
+        symbol:
+          defaultReward.mint?.symbol ??
+          defaultReward.symbol ??
+          (mint === "unknown" ? `reward${index + 1}` : mint.slice(0, 6)),
+        amountOwed:
+          decimals !== null && Number.isFinite(decimals)
+            ? rawToUiAmount(amountOwedRaw, decimals)
+            : amountOwedRaw,
+        amountOwedRaw,
+        decimals: decimals !== null && Number.isFinite(decimals) ? decimals : null
+      };
+    })
+    .filter((reward: PositionRewardReport) => reward.amountOwedRaw !== "0");
+}
 
 function parsePositiveDecimalInput(value: string, label: string): Decimal {
   const normalized = value.trim();
@@ -139,7 +222,7 @@ export function registerClmmCommands(program: Command): void {
   }): Command =>
     addRichHelp(cmd, {
       auth: PASSWORD_AUTH_HELP,
-      nonInteractive: NON_INTERACTIVE_HELP,
+      automation: AUTOMATION_HELP,
       ...sections
     });
 
@@ -147,41 +230,43 @@ export function registerClmmCommands(program: Command): void {
   clmm
     .command("pool")
     .description("Show CLMM pool state")
-    .argument("<pool-id>", "Pool address")
+    .argument("[pool-id]", "Pool address (prompted when omitted)")
     .action(handlePoolCommand);
 
   // clmm ticks <pool-id>
   clmm
     .command("ticks")
     .description("List initialized ticks with liquidity")
-    .argument("<pool-id>", "Pool address")
+    .argument("[pool-id]", "Pool address (prompted when omitted)")
     .option("--min-tick <tick>", "Minimum tick index")
     .option("--max-tick <tick>", "Maximum tick index")
     .option("--limit <number>", "Maximum ticks to display", "50")
     .action(handleTicksCommand);
 
   // clmm positions
-  withPasswordOptions(
-    clmm
-      .command("positions")
+  clmm
+    .command("positions")
     .description("List all positions for the active wallet")
       .option("--wallet <name>", "Wallet name to use (defaults to active wallet)")
-  ).action(handlePositionsCommand);
+      .option("--pool-id <address>", "Only include positions in this pool")
+      .option("--format <format>", "table|json|csv", "table")
+      .option("--output <path>", "Write JSON or CSV to a file; use - for stdout")
+      .option("--force", "Overwrite an existing output file")
+    .action(handlePositionsCommand);
 
   // clmm position <nft-mint>
-  withPasswordOptions(
-    clmm
-      .command("position")
+  clmm
+    .command("position")
     .description("Show detailed position state")
-      .argument("<nft-mint>", "Position NFT mint address")
-  ).action(handlePositionCommand);
+      .argument("[nft-mint]", "Position NFT mint address (prompted when omitted)")
+    .action(handlePositionCommand);
 
   // clmm collect-fees
   withPasswordOptions(
     clmm
       .command("collect-fees")
     .description("Collect accumulated fees from position(s)")
-      .option("--nft-mint <address>", "Position NFT mint address")
+      .option("--nft-mint <address>", "Position NFT mint address (prompted when omitted)")
       .option("--all", "Collect fees from all positions with unclaimed fees")
       .option("--priority-fee <sol>", "Priority fee in SOL")
   ).action(handleCollectFeesCommand);
@@ -191,7 +276,7 @@ export function registerClmmCommands(program: Command): void {
     clmm
       .command("close-position")
     .description("Close a CLMM position")
-      .requiredOption("--nft-mint <address>", "Position NFT mint address")
+      .option("--nft-mint <address>", "Position NFT mint address (prompted when omitted)")
       .option("--force", "Remove all liquidity first, then close")
       .option("--slippage <percent>", "Slippage tolerance for force mode")
       .option("--priority-fee <sol>", "Priority fee in SOL")
@@ -202,8 +287,8 @@ export function registerClmmCommands(program: Command): void {
     clmm
       .command("decrease-liquidity")
     .description("Remove liquidity from a position")
-      .requiredOption("--nft-mint <address>", "Position NFT mint address")
-      .requiredOption("--percent <number>", "Percentage of liquidity to remove (1-100)")
+      .option("--nft-mint <address>", "Position NFT mint address (prompted when omitted)")
+      .option("--percent <number>", "Percentage of liquidity to remove (1-100; prompted when omitted)")
       .option("--slippage <percent>", "Slippage tolerance")
       .option("--priority-fee <sol>", "Priority fee in SOL")
       .option("--swap-to-sol", "Swap both withdrawn tokens to SOL after removing liquidity")
@@ -214,8 +299,8 @@ export function registerClmmCommands(program: Command): void {
     clmm
       .command("increase-liquidity")
     .description("Add liquidity to an existing position")
-      .requiredOption("--nft-mint <address>", "Position NFT mint address")
-      .requiredOption("--amount <number>", "Amount to add")
+      .option("--nft-mint <address>", "Position NFT mint address (prompted when omitted)")
+      .option("--amount <number>", "Amount to add (prompted when omitted)")
       .option("--token <A|B>", "Which token the amount refers to", "A")
       .option("--slippage <percent>", "Slippage tolerance")
       .option("--priority-fee <sol>", "Priority fee in SOL")
@@ -239,10 +324,10 @@ export function registerClmmCommands(program: Command): void {
     clmm
       .command("open-position")
     .description("Open a new liquidity position")
-      .requiredOption("--pool-id <address>", "Pool address")
-      .requiredOption("--price-lower <number>", "Lower price bound")
-      .requiredOption("--price-upper <number>", "Upper price bound")
-      .requiredOption("--amount <number>", "Deposit amount")
+      .option("--pool-id <address>", "Pool address (prompted when omitted)")
+      .option("--price-lower <number>", "Lower price bound (prompted when omitted)")
+      .option("--price-upper <number>", "Upper price bound (prompted when omitted)")
+      .option("--amount <number>", "Deposit amount (prompted when omitted)")
       .option("--token <A|B>", "Which token the amount refers to", "A")
       .option("--slippage <percent>", "Slippage tolerance")
       .option("--priority-fee <sol>", "Priority fee in SOL")
@@ -267,15 +352,16 @@ export function registerClmmCommands(program: Command): void {
     clmm
       .command("create-pool")
     .description("Create a new CLMM pool")
-      .requiredOption("--mint-a <address>", "Token A mint address")
-      .requiredOption("--mint-b <address>", "Token B mint address")
-      .requiredOption("--fee-tier <bps>", "Fee tier in basis points (e.g., 500, 3000, 10000)")
-      .requiredOption("--initial-price <number>", "Initial price of token A in terms of token B")
+      .option("--mint-a <address>", "Token A mint address (prompted when omitted)")
+      .option("--mint-b <address>", "Token B mint address (prompted when omitted)")
+      .option("--fee-tier <bps>", "Fee tier in basis points (e.g., 500, 3000, 10000; prompted when omitted)")
+      .option("--initial-price <number>", "Initial price of token A in terms of token B (prompted when omitted)")
       .option("--priority-fee <sol>", "Priority fee in SOL")
   ).action(handleCreatePoolCommand);
 }
 
-async function handlePoolCommand(poolIdStr: string): Promise<void> {
+async function handlePoolCommand(poolIdStr?: string): Promise<void> {
+  poolIdStr = await promptIfMissing(poolIdStr, "Pool address");
   let poolId: PublicKey;
   try {
     poolId = new PublicKey(poolIdStr);
@@ -411,9 +497,10 @@ async function handlePoolCommand(poolIdStr: string): Promise<void> {
 }
 
 async function handleTicksCommand(
-  poolIdStr: string,
+  poolIdStr: string | undefined,
   options: { minTick?: string; maxTick?: string; limit?: string }
 ): Promise<void> {
+  poolIdStr = await promptIfMissing(poolIdStr, "Pool address");
   let poolId: PublicKey;
   try {
     poolId = new PublicKey(poolIdStr);
@@ -597,7 +684,35 @@ async function handleTicksCommand(
   }
 }
 
-async function handlePositionsCommand(options: { wallet?: string }): Promise<void> {
+async function handlePositionsCommand(options: {
+  wallet?: string;
+  poolId?: string;
+  format: string;
+  output?: string;
+  force?: boolean;
+}): Promise<void> {
+  if (!["table", "json", "csv"].includes(options.format)) {
+    logError("Invalid format. Use table, json, or csv.");
+    process.exitCode = 1;
+    return;
+  }
+  if (options.format === "table" && options.output && !isJsonOutput()) {
+    logError("--output requires --format json or --format csv");
+    process.exitCode = 1;
+    return;
+  }
+
+  let poolFilter: string | undefined;
+  if (options.poolId) {
+    try {
+      poolFilter = new PublicKey(options.poolId).toBase58();
+    } catch {
+      logError("Invalid pool ID");
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   const config = await loadConfig({ createIfMissing: true });
   const walletName = resolveWalletIdentifier(options.wallet, config.activeWallet);
 
@@ -608,15 +723,7 @@ async function handlePositionsCommand(options: { wallet?: string }): Promise<voi
     return;
   }
 
-  const password = await promptPassword("Enter wallet password");
-  let owner: Keypair;
-  try {
-    owner = await decryptWallet(walletName, password);
-  } catch (error) {
-    logError("Failed to decrypt wallet", (error as Error).message);
-    process.exitCode = 1;
-    return;
-  }
+  const owner = await getWalletPublicKey(walletName);
 
   const raydium = await withSpinner("Loading SDK", () =>
     loadRaydium({ owner, disableLoadToken: true })
@@ -638,13 +745,8 @@ async function handlePositionsCommand(options: { wallet?: string }): Promise<voi
     return;
   }
 
-  if (!positions || positions.length === 0) {
-    if (isJsonOutput()) {
-      logJson({ positions: [], count: 0 });
-    } else {
-      logInfo(`No CLMM positions found for wallet: ${owner.publicKey.toBase58()}`);
-    }
-    return;
+  if (poolFilter) {
+    positions = positions.filter((position) => position.poolId?.toBase58() === poolFilter);
   }
 
   // Collect unique pool IDs
@@ -695,7 +797,7 @@ async function handlePositionsCommand(options: { wallet?: string }): Promise<voi
     getTokenPrices(Array.from(uniqueMints))
   );
 
-  const positionsData = positions.map((pos) => {
+  const positionsData: PositionReport[] = positions.map((pos) => {
     const poolIdStr = pos.poolId?.toBase58() ?? "";
     const freshPoolData = poolDataMap.get(poolIdStr);
     const poolInfo = freshPoolData?.poolInfo ?? pos.poolInfo;
@@ -724,6 +826,11 @@ async function handlePositionsCommand(options: { wallet?: string }): Promise<voi
     const priceA = mintA?.address ? (tokenPrices.get(mintA.address) ?? null) : null;
     const priceB = mintB?.address ? (tokenPrices.get(mintB.address) ?? null) : null;
     const usdValue = calculateUsdValue(amounts.amount0, amounts.amount1, priceA, priceB);
+    const priceLower = tickToPrice(pos.tickLower, decimalsA, decimalsB);
+    const priceUpper = tickToPrice(pos.tickUpper, decimalsA, decimalsB);
+    const currentPrice = sqrtPriceX64ToPrice(sqrtPriceX64, decimalsA, decimalsB);
+    const feesOwed0Raw = pos.tokenFeesOwedA?.toString() ?? "0";
+    const feesOwed1Raw = pos.tokenFeesOwedB?.toString() ?? "0";
 
     return {
       nftMint: pos.nftMint?.toBase58() ?? "unknown",
@@ -731,28 +838,89 @@ async function handlePositionsCommand(options: { wallet?: string }): Promise<voi
       tickLower: pos.tickLower,
       tickUpper: pos.tickUpper,
       currentTick,
+      priceLower: priceLower.toString(),
+      priceUpper: priceUpper.toString(),
+      currentPrice: currentPrice.toString(),
       inRange,
       liquidity: pos.liquidity?.toString() ?? "0",
       amount0: amounts.amount0.toString(),
       amount1: amounts.amount1.toString(),
       symbol0: mintA?.symbol || mintA?.address?.slice(0, 6) || "token0",
       symbol1: mintB?.symbol || mintB?.address?.slice(0, 6) || "token1",
-      feesOwed0: pos.tokenFeesOwedA?.toString() ?? "0",
-      feesOwed1: pos.tokenFeesOwedB?.toString() ?? "0",
+      feesOwed0: rawToUiAmount(feesOwed0Raw, decimalsA),
+      feesOwed1: rawToUiAmount(feesOwed1Raw, decimalsB),
+      feesOwed0Raw,
+      feesOwed1Raw,
+      rewards: buildRewardReports(pos, poolInfo),
       ...(usdValue !== null && { usdValue: usdValue.toNumber() })
     };
   });
 
+  const report = {
+    wallet: owner.toBase58(),
+    walletName,
+    poolId: poolFilter ?? null,
+    positions: positionsData,
+    count: positionsData.length
+  };
+
   if (isJsonOutput()) {
-    logJson({
-      wallet: owner.publicKey.toBase58(),
-      positions: positionsData,
-      count: positionsData.length
-    });
+    if (options.output) {
+      const resolved = await writeExport(
+        `${JSON.stringify(report, null, 2)}\n`,
+        options.output,
+        Boolean(options.force)
+      );
+      if (resolved) process.stderr.write(`Wrote ${resolved}\n`);
+    } else {
+      logJson(report);
+    }
     return;
   }
 
-  logInfo(`Wallet: ${owner.publicKey.toBase58()}`);
+  if (options.format === "csv") {
+    const csv = serializeCsv(positionsData, [
+      { header: "wallet", value: () => owner.toBase58() },
+      { header: "nftMint", value: (position) => position.nftMint },
+      { header: "poolId", value: (position) => position.poolId },
+      { header: "inRange", value: (position) => position.inRange },
+      { header: "tickLower", value: (position) => position.tickLower },
+      { header: "tickUpper", value: (position) => position.tickUpper },
+      { header: "currentTick", value: (position) => position.currentTick },
+      { header: "priceLower", value: (position) => position.priceLower },
+      { header: "priceUpper", value: (position) => position.priceUpper },
+      { header: "currentPrice", value: (position) => position.currentPrice },
+      { header: "token0", value: (position) => position.symbol0 },
+      { header: "amount0", value: (position) => position.amount0 },
+      { header: "feesOwed0", value: (position) => position.feesOwed0 },
+      { header: "token1", value: (position) => position.symbol1 },
+      { header: "amount1", value: (position) => position.amount1 },
+      { header: "feesOwed1", value: (position) => position.feesOwed1 },
+      { header: "usdValue", value: (position) => position.usdValue },
+      {
+        header: "rewards",
+        value: (position) =>
+          position.rewards
+            .map((reward) =>
+              reward.decimals === null
+                ? `${reward.symbol}:${reward.amountOwedRaw} raw units`
+                : `${reward.symbol}:${reward.amountOwed}`
+            )
+            .join(";")
+      }
+    ]);
+    const resolved = await writeExport(csv, options.output, Boolean(options.force));
+    if (resolved) process.stderr.write(`Wrote ${resolved}\n`);
+    return;
+  }
+
+  if (positionsData.length === 0) {
+    const suffix = poolFilter ? ` in pool ${poolFilter}` : "";
+    logInfo(`No CLMM positions found for wallet ${owner.toBase58()}${suffix}`);
+    return;
+  }
+
+  logInfo(`Wallet: ${owner.toBase58()}`);
   logInfo(`Positions: ${positionsData.length}`);
   logInfo("");
 
@@ -761,19 +929,31 @@ async function handlePositionsCommand(options: { wallet?: string }): Promise<voi
 
     logInfo(`Position: ${pos.nftMint}`);
     logInfo(`  Pool: ${pos.poolId}`);
-    logInfo(`  Range: [${pos.tickLower}, ${pos.tickUpper}] (current: ${pos.currentTick}) - ${rangeStatus}`);
+    logInfo(`  Range: ${formatPrice(new Decimal(pos.priceLower))} - ${formatPrice(new Decimal(pos.priceUpper))} ${pos.symbol1}/${pos.symbol0}`);
+    logInfo(`  Current: ${formatPrice(new Decimal(pos.currentPrice))} (${rangeStatus})`);
+    logInfo(`  Ticks: [${pos.tickLower}, ${pos.tickUpper}] (current: ${pos.currentTick})`);
     logInfo(`  Liquidity: ${pos.liquidity}`);
     logInfo(`  ${pos.symbol0}: ${formatTokenAmount(new Decimal(pos.amount0))}`);
     logInfo(`  ${pos.symbol1}: ${formatTokenAmount(new Decimal(pos.amount1))}`);
     if (pos.usdValue !== undefined) logInfo(`  Value: ${formatUsd(pos.usdValue)}`);
-    if (pos.feesOwed0 !== "0" || pos.feesOwed1 !== "0") {
+    if (pos.feesOwed0Raw !== "0" || pos.feesOwed1Raw !== "0") {
       logInfo(`  Fees owed: ${pos.feesOwed0} ${pos.symbol0}, ${pos.feesOwed1} ${pos.symbol1}`);
+    }
+    if (pos.rewards.length > 0) {
+      logInfo(
+        `  Rewards: ${pos.rewards.map((reward) =>
+          reward.decimals === null
+            ? `${reward.amountOwedRaw} raw units ${reward.symbol}`
+            : `${reward.amountOwed} ${reward.symbol}`
+        ).join(", ")}`
+      );
     }
     logInfo("");
   }
 }
 
-async function handlePositionCommand(nftMintStr: string): Promise<void> {
+async function handlePositionCommand(nftMintStr?: string): Promise<void> {
+  nftMintStr = await promptIfMissing(nftMintStr, "Position NFT mint address");
   let nftMint: PublicKey;
   try {
     nftMint = new PublicKey(nftMintStr);
@@ -793,15 +973,7 @@ async function handlePositionCommand(nftMintStr: string): Promise<void> {
     return;
   }
 
-  const password = await promptPassword("Enter wallet password");
-  let owner: Keypair;
-  try {
-    owner = await decryptWallet(walletName, password);
-  } catch (error) {
-    logError("Failed to decrypt wallet", (error as Error).message);
-    process.exitCode = 1;
-    return;
-  }
+  const owner = await getWalletPublicKey(walletName);
 
   const raydium = await withSpinner("Loading SDK", () =>
     loadRaydium({ owner, disableLoadToken: true })
@@ -886,6 +1058,11 @@ async function handlePositionCommand(nftMintStr: string): Promise<void> {
   const priceAUsd = mintA?.address ? (tokenPrices.get(mintA.address) ?? null) : null;
   const priceBUsd = mintB?.address ? (tokenPrices.get(mintB.address) ?? null) : null;
   const usdValue = calculateUsdValue(amounts.amount0, amounts.amount1, priceAUsd, priceBUsd);
+  const feesOwed0Raw = position.tokenFeesOwedA?.toString() ?? "0";
+  const feesOwed1Raw = position.tokenFeesOwedB?.toString() ?? "0";
+  const feesOwed0 = rawToUiAmount(feesOwed0Raw, decimalsA);
+  const feesOwed1 = rawToUiAmount(feesOwed1Raw, decimalsB);
+  const rewards = buildRewardReports(position, poolInfo);
 
   if (isJsonOutput()) {
     logJson({
@@ -914,11 +1091,11 @@ async function handlePositionCommand(nftMintStr: string): Promise<void> {
       amount0: amounts.amount0.toString(),
       amount1: amounts.amount1.toString(),
       ...(usdValue !== null && { usdValue: usdValue.toNumber() }),
-      feesOwed0: position.tokenFeesOwedA?.toString() ?? "0",
-      feesOwed1: position.tokenFeesOwedB?.toString() ?? "0",
-      rewardInfos: position.rewardInfos?.map((r: { rewardAmountOwed?: { toString(): string } }) => ({
-        rewardAmountOwed: r.rewardAmountOwed?.toString() ?? "0"
-      })) ?? []
+      feesOwed0,
+      feesOwed1,
+      feesOwed0Raw,
+      feesOwed1Raw,
+      rewards
     });
     return;
   }
@@ -946,17 +1123,17 @@ async function handlePositionCommand(nftMintStr: string): Promise<void> {
   if (usdValue !== null) logInfo(`  Value: ${formatUsd(usdValue)}`);
   logInfo("");
   logInfo("Fees Owed:");
-  logInfo(`  ${symbolA}: ${position.tokenFeesOwedA?.toString() ?? "0"}`);
-  logInfo(`  ${symbolB}: ${position.tokenFeesOwedB?.toString() ?? "0"}`);
+  logInfo(`  ${symbolA}: ${feesOwed0}`);
+  logInfo(`  ${symbolB}: ${feesOwed1}`);
 
-  if (position.rewardInfos?.length) {
+  if (rewards.length > 0) {
     logInfo("");
     logInfo("Rewards:");
-    for (let i = 0; i < position.rewardInfos.length; i++) {
-      const reward = position.rewardInfos[i];
-      if (reward.rewardAmountOwed && !reward.rewardAmountOwed.isZero?.()) {
-        logInfo(`  Reward ${i + 1}: ${reward.rewardAmountOwed?.toString() ?? "0"}`);
-      }
+    for (const reward of rewards) {
+      const amount = reward.decimals === null
+        ? `${reward.amountOwedRaw} raw units`
+        : reward.amountOwed;
+      logInfo(`  ${reward.symbol}: ${amount}`);
     }
   }
 }
@@ -999,6 +1176,12 @@ async function handleCollectFeesCommand(options: {
   all?: boolean;
   priorityFee?: string;
 }): Promise<void> {
+  if (!options.nftMint && !options.all) {
+    const selection = await promptIfMissing(undefined, "Position NFT mint address (or type all)");
+    if (selection.trim().toLowerCase() === "all") options.all = true;
+    else options.nftMint = selection;
+  }
+
   if (options.nftMint && options.all) {
     logError("Choose either --nft-mint <address> or --all, not both");
     process.exitCode = 1;
@@ -1176,11 +1359,12 @@ async function handleCollectFeesCommand(options: {
 }
 
 async function handleClosePositionCommand(options: {
-  nftMint: string;
+  nftMint?: string;
   force?: boolean;
   slippage?: string;
   priorityFee?: string;
 }): Promise<void> {
+  options.nftMint = await promptIfMissing(options.nftMint, "Position NFT mint address");
   const config = await loadConfig({ createIfMissing: true });
   const walletName = resolveWalletIdentifier(undefined, config.activeWallet);
 
@@ -1392,12 +1576,19 @@ async function handleClosePositionCommand(options: {
 }
 
 async function handleDecreaseLiquidityCommand(options: {
-  nftMint: string;
-  percent: string;
+  nftMint?: string;
+  percent?: string;
   slippage?: string;
   priorityFee?: string;
   swapToSol?: boolean;
 }): Promise<void> {
+  options.nftMint = await promptIfMissing(options.nftMint, "Position NFT mint address");
+  options.percent = await promptNumberIfMissing(options.percent, "Percentage of liquidity to remove (1-100)", (input) => {
+    const value = Number(input);
+    return Number.isFinite(value) && value >= 1 && value <= 100
+      ? true
+      : "Enter a percentage from 1 to 100";
+  });
   const config = await loadConfig({ createIfMissing: true });
   const walletName = resolveWalletIdentifier(undefined, config.activeWallet);
 
@@ -1706,13 +1897,21 @@ async function handleDecreaseLiquidityCommand(options: {
 }
 
 async function handleIncreaseLiquidityCommand(options: {
-  nftMint: string;
-  amount: string;
+  nftMint?: string;
+  amount?: string;
   token?: string;
   slippage?: string;
   priorityFee?: string;
   autoSwap?: boolean;
 }): Promise<void> {
+  options.nftMint = await promptIfMissing(options.nftMint, "Position NFT mint address");
+  options.amount = await promptNumberIfMissing(options.amount, "Amount to add", (input) => {
+    try {
+      return parsePositiveDecimalInput(input, "Amount").gt(0) ? true : "Enter a positive amount";
+    } catch {
+      return "Enter a positive amount";
+    }
+  });
   const config = await loadConfig({ createIfMissing: true });
   const walletName = resolveWalletIdentifier(undefined, config.activeWallet);
 
@@ -2043,15 +2242,37 @@ async function handleIncreaseLiquidityCommand(options: {
 }
 
 async function handleOpenPositionCommand(options: {
-  poolId: string;
-  priceLower: string;
-  priceUpper: string;
-  amount: string;
+  poolId?: string;
+  priceLower?: string;
+  priceUpper?: string;
+  amount?: string;
   token?: string;
   slippage?: string;
   priorityFee?: string;
   autoSwap?: boolean;
 }): Promise<void> {
+  options.poolId = await promptIfMissing(options.poolId, "Pool address");
+  options.priceLower = await promptNumberIfMissing(options.priceLower, "Lower price", (input) => {
+    try {
+      return parsePositiveDecimalInput(input, "Lower price").gt(0) ? true : "Enter a positive price";
+    } catch {
+      return "Enter a positive price";
+    }
+  });
+  options.priceUpper = await promptNumberIfMissing(options.priceUpper, "Upper price", (input) => {
+    try {
+      return parsePositiveDecimalInput(input, "Upper price").gt(0) ? true : "Enter a positive price";
+    } catch {
+      return "Enter a positive price";
+    }
+  });
+  options.amount = await promptNumberIfMissing(options.amount, "Deposit amount", (input) => {
+    try {
+      return parsePositiveDecimalInput(input, "Amount").gt(0) ? true : "Enter a positive amount";
+    } catch {
+      return "Enter a positive amount";
+    }
+  });
   const config = await loadConfig({ createIfMissing: true });
   const walletName = resolveWalletIdentifier(undefined, config.activeWallet);
 
@@ -2460,12 +2681,24 @@ async function handleOpenPositionCommand(options: {
 }
 
 async function handleCreatePoolCommand(options: {
-  mintA: string;
-  mintB: string;
-  feeTier: string;
-  initialPrice: string;
+  mintA?: string;
+  mintB?: string;
+  feeTier?: string;
+  initialPrice?: string;
   priorityFee?: string;
 }): Promise<void> {
+  options.mintA = await promptIfMissing(options.mintA, "Token A mint address");
+  options.mintB = await promptIfMissing(options.mintB, "Token B mint address");
+  options.feeTier = await promptNumberIfMissing(options.feeTier, "Fee tier (bps)", (input) =>
+    Number.isFinite(Number(input)) && Number(input) > 0
+      ? true
+      : "Enter a positive fee tier in basis points"
+  );
+  options.initialPrice = await promptNumberIfMissing(options.initialPrice, "Initial price (token B per token A)", (input) =>
+    Number.isFinite(Number(input)) && Number(input) > 0
+      ? true
+      : "Enter a positive initial price"
+  );
   const config = await loadConfig({ createIfMissing: true });
   const walletName = resolveWalletIdentifier(undefined, config.activeWallet);
 

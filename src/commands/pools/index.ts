@@ -28,39 +28,36 @@ export function registerPoolCommands(program: Command): void {
     .option("--mint-a <mint>", "Filter by mint A")
     .option("--mint-b <mint>", "Filter by mint B")
     .option("--limit <number>", "Limit results", "100")
-    .option("--page <number>", "Page number", "1")
+    .option("--page <number>", "Deprecated numeric page option; ignored by current Raydium API", "1")
+    .option("--next-page-id <id>", "Raydium API cursor for the next page")
     .action(async (options: {
       type: PoolTypeOption;
       mintA?: string;
       mintB?: string;
       limit: string;
       page: string;
+      nextPageId?: string;
     }) => {
       const limit = Number(options.limit);
-      const page = Number(options.page);
       const raydium = await withSpinner("Fetching pools", () => loadRaydium({ disableLoadToken: true }));
       const poolType = mapPoolType(options.type);
 
       let data;
-      let outputPage: number | undefined = Number.isFinite(page) ? page : undefined;
       if (options.mintA || options.mintB) {
         const mintA = options.mintA ?? options.mintB;
         const mintB = options.mintA ? options.mintB : undefined;
-        const mintPage = Number.isFinite(page) && page > 0 ? page : 1;
-        outputPage = mintPage;
         data = await raydium.api.fetchPoolByMints({
           mint1: mintA!,
           mint2: mintB,
           type: poolType,
-          page: mintPage
+          pageSize: Number.isFinite(limit) ? limit : 100,
+          nextPageId: options.nextPageId
         });
       } else {
-        const listPage = Number.isFinite(page) && page > 0 ? page : 1;
-        outputPage = listPage;
         data = await raydium.api.getPoolList({
           type: poolType,
-          page: listPage,
-          pageSize: Number.isFinite(limit) ? limit : 100
+          pageSize: Number.isFinite(limit) ? limit : 100,
+          nextPageId: options.nextPageId
         });
       }
 
@@ -70,7 +67,6 @@ export function registerPoolCommands(program: Command): void {
       if (isJsonOutput()) {
         logJson({
           pools: results,
-          page: outputPage,
           count: data.count,
           hasNextPage: data.hasNextPage
         });
@@ -82,7 +78,7 @@ export function registerPoolCommands(program: Command): void {
         return;
       }
 
-      logInfo(`Showing ${results.length} pools (page ${outputPage}, total: ${data.count})\n`);
+      logInfo(`Showing ${results.length} pools (total: ${data.count})\n`);
 
       results.forEach((pool) => {
         logInfo(`${pool.id} (${pool.type})`);

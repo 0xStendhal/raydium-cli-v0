@@ -4,6 +4,7 @@ import { inspect } from "util";
 
 let jsonOutput = false;
 let debugOutput = false;
+let quietOutput = false;
 
 export function setJsonOutput(enabled: boolean): void {
   jsonOutput = enabled;
@@ -11,6 +12,10 @@ export function setJsonOutput(enabled: boolean): void {
 
 export function isJsonOutput(): boolean {
   return jsonOutput;
+}
+
+export function setQuietOutput(enabled: boolean): void {
+  quietOutput = enabled;
 }
 
 export function setDebugOutput(enabled: boolean): void {
@@ -26,13 +31,13 @@ export function logJson(payload: unknown): void {
 }
 
 export function logInfo(message: string): void {
-  if (!jsonOutput) {
+  if (!jsonOutput && !quietOutput) {
     console.log(message);
   }
 }
 
 export function logSuccess(message: string): void {
-  if (!jsonOutput) {
+  if (!jsonOutput && !quietOutput) {
     console.log(chalk.green(message));
   }
 }
@@ -54,7 +59,7 @@ export function logDebug(details: unknown): void {
 }
 
 export async function withSpinner<T>(text: string, task: () => Promise<T>): Promise<T> {
-  if (jsonOutput) {
+  if (jsonOutput || quietOutput) {
     return task();
   }
 
@@ -130,6 +135,39 @@ export function logErrorWithDebug(
     return;
   }
   logError(message, summary);
+}
+
+export function logGuidedError(options: {
+  message: string;
+  code: string;
+  details?: unknown;
+  hints?: string[];
+  debug?: boolean;
+}): void {
+  const hints = options.hints ?? [];
+  if (jsonOutput) {
+    const details = options.details instanceof Error
+      ? options.debug
+        ? getErrorDetails(options.details, options.message)
+        : getErrorMessage(options.details, options.message)
+      : options.details;
+    logJson({
+      error: options.message,
+      code: options.code,
+      ...(details !== undefined && { details }),
+      ...(hints.length > 0 && { hints })
+    });
+    return;
+  }
+
+  console.error(chalk.red(options.message));
+  if (options.debug && options.details !== undefined) {
+    console.error(chalk.yellow(formatDetails(options.details)));
+  }
+  if (hints.length > 0) {
+    console.error(chalk.gray("Next steps:"));
+    hints.forEach((hint) => console.error(chalk.gray(`  ${hint}`)));
+  }
 }
 
 function formatDetails(details: unknown): string {

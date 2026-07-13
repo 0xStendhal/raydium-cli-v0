@@ -7,7 +7,7 @@ type HelpSections = {
   auth?: HelpSectionValue;
   units?: HelpSectionValue;
   defaults?: HelpSectionValue;
-  nonInteractive?: HelpSectionValue;
+  automation?: HelpSectionValue;
   examples?: HelpSectionValue;
   notes?: HelpSectionValue;
 };
@@ -33,8 +33,8 @@ function formatSection(title: string, value: HelpSectionValue): string | undefin
 export const PASSWORD_AUTH_HELP =
   "Use --password-stdin or the interactive password prompt. --password requires --unsafe-secret-flags.";
 
-export const NON_INTERACTIVE_HELP =
-  "Prefer --json --yes --password-stdin for non-interactive use.";
+export const AUTOMATION_HELP =
+  "Quote with --json first; use --json --yes --password-stdin and --approve-quote only for an approved execution.";
 
 export function buildHelpText(sections: HelpSections): string {
   const rendered = [
@@ -42,7 +42,7 @@ export function buildHelpText(sections: HelpSections): string {
     formatSection("Auth", sections.auth),
     formatSection("Units", sections.units),
     formatSection("Defaults", sections.defaults),
-    formatSection("Non-interactive", sections.nonInteractive),
+    formatSection("Automation", sections.automation),
     formatSection("Examples", sections.examples),
     formatSection("Notes", sections.notes)
   ].filter((section): section is string => Boolean(section));
@@ -56,4 +56,14 @@ export function buildHelpText(sections: HelpSections): string {
 
 export function addRichHelp(command: Command, sections: HelpSections): Command {
   return command.addHelpText("after", buildHelpText(sections));
+}
+
+export function outputHelpWithAdvancedOptions(command: Command): void {
+  const hiddenOptions = command.options.filter((option) => option.hidden);
+  hiddenOptions.forEach((option) => option.hideHelp(false));
+  try {
+    command.outputHelp();
+  } finally {
+    hiddenOptions.forEach((option) => option.hideHelp(true));
+  }
 }

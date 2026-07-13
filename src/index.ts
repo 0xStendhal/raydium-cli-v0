@@ -9,7 +9,16 @@ import { registerSwapCommands } from "./commands/swap";
 import { registerLaunchpadCommands } from "./commands/launchpad";
 import { registerClmmCommands } from "./commands/clmm";
 import { registerCpmmCommands } from "./commands/cpmm";
-import { logError, setDebugOutput, setJsonOutput } from "./lib/output";
+import { registerTransactionCommands } from "./commands/tx";
+import { registerFarmCommands } from "./commands/farm";
+import { registerStatusCommand } from "./commands/status";
+import {
+  isDebugOutput,
+  logGuidedError,
+  setDebugOutput,
+  setJsonOutput,
+  setQuietOutput
+} from "./lib/output";
 import {
   setAllowUnsafeSecretFlags,
   setAssumeYes,
@@ -18,6 +27,7 @@ import {
 } from "./lib/prompt";
 import { buildHelpText } from "./lib/help";
 import { setKeystoreOverride } from "./lib/wallet-manager";
+import { explainError } from "./lib/errors";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { version } = require("../package.json");
@@ -30,6 +40,7 @@ program
   .description("Raydium CLI")
   .version(version)
   .option("--json", "output json")
+  .option("--format <format>", "output format: text|json|csv")
   .option("--debug", "print full errors")
   .option("--yes", "assume yes for confirmations")
   .option("--password <password>", "wallet password (unsafe; requires --unsafe-secret-flags)")
@@ -44,19 +55,19 @@ program.addHelpText(
   "after",
   buildHelpText({
     summary: [
-      "Use command groups like wallet, swap, clmm, cpmm, launchpad, and config.",
+      "Use command groups like wallet, swap, clmm, cpmm, farm, tx, launchpad, and config.",
       "Cluster-aware commands default to the configured cluster from raydium config."
     ],
     auth: [
-      "Use --password-stdin for non-interactive use or let the CLI prompt interactively.",
+      "Use --password-stdin for automation or let the CLI prompt interactively.",
       "--password is intentionally gated behind --unsafe-secret-flags."
     ],
     defaults: [
       "The active wallet is used unless --keystore overrides it.",
       "--json switches to machine-readable output when supported."
     ],
-    nonInteractive: [
-      "Prefer raydium --json --yes --password-stdin <command> for scripts.",
+    automation: [
+      "Quote with --json first; use --yes only for an approved execution.",
       "Avoid passing secrets directly on the command line unless you explicitly accept the risk."
     ],
     examples: [
@@ -72,7 +83,9 @@ program.hook("preAction", (_thisCommand, actionCommand) => {
     typeof actionCommand.optsWithGlobals === "function"
       ? actionCommand.optsWithGlobals()
       : actionCommand.opts();
-  setJsonOutput(Boolean(opts.json));
+  const format = typeof opts.format === "string" ? opts.format : undefined;
+  setJsonOutput(Boolean(opts.json) || format === "json");
+  setQuietOutput(format === "csv");
   setDebugOutput(Boolean(opts.debug));
   setAssumeYes(Boolean(opts.yes));
   setAllowUnsafeSecretFlags(Boolean(opts.unsafeSecretFlags));
@@ -82,15 +95,24 @@ program.hook("preAction", (_thisCommand, actionCommand) => {
 });
 
 registerConfigCommands(program);
+registerStatusCommand(program);
 registerWalletCommands(program);
 registerPoolCommands(program);
 registerSwapCommands(program);
 registerLaunchpadCommands(program);
 registerClmmCommands(program);
 registerCpmmCommands(program);
+registerTransactionCommands(program);
+registerFarmCommands(program);
 
 program.parseAsync(process.argv).catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error ?? "Unknown error");
-  logError(message);
+  const guidance = explainError(error);
+  logGuidedError({
+    message: guidance.message,
+    code: guidance.code,
+    details: guidance.details,
+    hints: guidance.hints,
+    debug: isDebugOutput()
+  });
   process.exitCode = 1;
 });

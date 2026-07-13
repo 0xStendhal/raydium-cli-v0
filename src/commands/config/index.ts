@@ -1,9 +1,17 @@
 import { Command } from "commander";
 import inquirer from "inquirer";
 
-import { loadConfig, parseConfigValue, saveConfig, isValidConfigKey } from "../../lib/config-manager";
+import {
+  loadConfig,
+  parseConfigValue,
+  saveConfig,
+  isValidConfigKey,
+  redactConfig,
+  redactConfigValue
+} from "../../lib/config-manager";
 import { isJsonOutput, logError, logInfo, logJson, logSuccess } from "../../lib/output";
 import { Cluster } from "../../types/config";
+import { promptIfMissing } from "../../lib/prompt";
 
 export function registerConfigCommands(program: Command): void {
   const config = program.command("config").description("Manage CLI configuration");
@@ -72,7 +80,7 @@ export function registerConfigCommands(program: Command): void {
       await saveConfig(nextConfig);
 
       if (isJsonOutput()) {
-        logJson({ ok: true, config: nextConfig });
+        logJson({ ok: true, config: redactConfig(nextConfig) });
       } else {
         logSuccess("Config saved");
       }
@@ -81,9 +89,11 @@ export function registerConfigCommands(program: Command): void {
   config
     .command("set")
     .description("Set a config value")
-    .argument("<key>")
-    .argument("<value>")
-    .action(async (key: string, value: string) => {
+    .argument("[key]")
+    .argument("[value]")
+    .action(async (key?: string, value?: string) => {
+      key = await promptIfMissing(key, "Configuration key");
+      value = await promptIfMissing(value, `Value for ${key}`);
       if (!isValidConfigKey(key)) {
         logError(`Unknown config key: ${key}`);
         process.exitCode = 1;
@@ -96,7 +106,7 @@ export function registerConfigCommands(program: Command): void {
       await saveConfig(nextConfig);
 
       if (isJsonOutput()) {
-        logJson({ ok: true, config: nextConfig });
+        logJson({ ok: true, config: redactConfig(nextConfig) });
       } else {
         logSuccess(`Updated ${key}`);
       }
@@ -117,17 +127,17 @@ export function registerConfigCommands(program: Command): void {
         }
 
         if (isJsonOutput()) {
-          logJson({ [key]: configData[key] });
+          logJson({ [key]: redactConfigValue(key, configData[key]) });
         } else {
-          logInfo(String(configData[key] ?? ""));
+          logInfo(String(redactConfigValue(key, configData[key]) ?? ""));
         }
         return;
       }
 
       if (isJsonOutput()) {
-        logJson(configData);
+        logJson(redactConfig(configData));
       } else {
-        Object.entries(configData).forEach(([itemKey, value]) => {
+        Object.entries(redactConfig(configData)).forEach(([itemKey, value]) => {
           logInfo(`${itemKey}: ${value}`);
         });
       }

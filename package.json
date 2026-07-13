@@ -1,8 +1,16 @@
 {
-  "name": "@zoidz123/raydium-cli",
+  "name": "raydium-cli-v0",
   "version": "0.1.1",
   "description": "CLI tool for interacting with Raydium on Solana — swap, manage CLMM/CPMM positions, launch tokens, and more",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xStendhal/raydium-cli-v0.git"
+  },
+  "homepage": "https://github.com/0xStendhal/raydium-cli-v0#readme",
+  "bugs": {
+    "url": "https://github.com/0xStendhal/raydium-cli-v0/issues"
+  },
   "bin": {
     "raydium": "dist/index.js"
   },
@@ -13,6 +21,7 @@
   "scripts": {
     "postinstall": "node scripts/force-bigint-buffer-js.js",
     "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/lib/*.test.js tests/*.test.js",
     "dev": "ts-node src/index.ts",
     "prepublishOnly": "npm run build"
   },
@@ -34,7 +43,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@raydium-io/raydium-sdk-v2": "0.2.31-alpha",
+    "@raydium-io/raydium-sdk-v2": "0.2.59-alpha",
     "@solana/spl-token": "0.4.8",
     "@solana/web3.js": "1.95.3",
     "bip39": "3.1.0",

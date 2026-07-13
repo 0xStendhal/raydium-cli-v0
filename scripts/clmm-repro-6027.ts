@@ -82,9 +82,9 @@ function buildSwapSingleIx(args: {
 
 async function main() {
   const [, , poolIdArg, inputMintArg, amountInArg, truncateAfterFirstArg, feePayerArg] = process.argv;
-  if (!poolIdArg) {
+  if (!poolIdArg || !feePayerArg) {
     console.error(
-      "Usage: ts-node scripts/clmm-repro-6027.ts <poolId> [inputMint] [amountInRaw] [truncateAfterFirstTickArrayCount] [feePayerPubkey]",
+      "Usage: ts-node scripts/clmm-repro-6027.ts <poolId> [inputMint] [amountInRaw] [truncateAfterFirstTickArrayCount] <feePayerPubkey>",
     );
     process.exit(1);
   }
@@ -147,7 +147,7 @@ async function main() {
 
   // For simulation we need a fee payer that is a *system-owned* account with lamports.
   // We don't need the private key because we disable signature verification.
-  const txPayer = feePayerArg ? new PublicKey(feePayerArg) : new PublicKey("B3EiKmf4DQBUwWuDvWc7bTztVNL98kngHJ9ZLme5JbCf");
+  const txPayer = new PublicKey(feePayerArg);
   const txPayerInfo = await connection.getAccountInfo(txPayer, "confirmed");
   if (!txPayerInfo) throw new Error(`fee payer account not found on-chain: ${txPayer.toBase58()}`);
   if (!txPayerInfo.owner.equals(SystemProgram.programId)) {
