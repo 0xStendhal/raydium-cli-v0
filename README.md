@@ -4,8 +4,8 @@ CLI tool for interacting with Raydium on Solana -- swap, manage CLMM/CPMM positi
 
 ## Install
 
-```
-npm install -g github:0xStendhal/raydium-cli-v0
+```bash
+npm install -g https://github.com/0xStendhal/raydium-cli-v0/archive/refs/heads/main.tar.gz
 ```
 
 Or install from a local checkout:
