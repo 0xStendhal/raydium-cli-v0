@@ -3,15 +3,7 @@ import path from "path";
 
 import inquirer from "inquirer";
 import bs58 from "bs58";
-import BN from "bn.js";
 import { Command } from "commander";
-import { PublicKey } from "@solana/web3.js";
-import {
-  AccountLayout,
-  MintLayout,
-  TOKEN_2022_PROGRAM_ID,
-  TOKEN_PROGRAM_ID
-} from "@solana/spl-token";
 
 import { CONFIG_DIR } from "../../lib/paths";
 import { loadConfig, saveConfig } from "../../lib/config-manager";
@@ -32,6 +24,7 @@ import {
   promptInput,
   promptPassword,
   promptSecretInput,
+  promptIfMissing,
   readSecretFromFile,
   readSecretFromStdin
 } from "../../lib/prompt";
@@ -43,89 +36,12 @@ import {
   logError,
   withSpinner
 } from "../../lib/output";
-import { getConnection } from "../../lib/connection";
-import { addRichHelp, NON_INTERACTIVE_HELP, PASSWORD_AUTH_HELP } from "../../lib/help";
+import { addRichHelp, AUTOMATION_HELP, PASSWORD_AUTH_HELP } from "../../lib/help";
+import { fetchRpcBalances } from "../../lib/balances";
 
 const SECRET_EXPORTS_DIR = path.join(CONFIG_DIR, "exports");
 const SECRET_EXPORT_DIR_MODE = 0o700;
 const SECRET_EXPORT_FILE_MODE = 0o600;
-
-type RpcBalance = {
-  mint: string;
-  symbol: string;
-  name: string;
-  amount: string;
-  raw: string;
-  decimals: number;
-};
-
-function formatAmount(raw: BN, decimals: number): string {
-  if (decimals <= 0) return raw.toString();
-  const rawStr = raw.toString().padStart(decimals + 1, "0");
-  const whole = rawStr.slice(0, -decimals);
-  const frac = rawStr.slice(-decimals).replace(/0+$/, "");
-  return frac ? `${whole}.${frac}` : whole;
-}
-
-async function fetchRpcBalances(owner: PublicKey): Promise<RpcBalance[]> {
-  const connection = await getConnection();
-  const [solBalance, splAccounts, token2022Accounts] = await Promise.all([
-    connection.getBalance(owner),
-    connection.getTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }),
-    connection.getTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID })
-  ]);
-
-  const tokenAccounts = [...splAccounts.value, ...token2022Accounts.value].map(({ account }) =>
-    AccountLayout.decode(account.data)
-  );
-
-  const mintSet = new Set<string>();
-  tokenAccounts.forEach((account) => mintSet.add(account.mint.toBase58()));
-  const mintList = Array.from(mintSet);
-  const mintInfos = new Map<string, number>();
-  const batchSize = 100;
-
-  for (let i = 0; i < mintList.length; i += batchSize) {
-    const batch = mintList.slice(i, i + batchSize);
-    const accounts = await connection.getMultipleAccountsInfo(
-      batch.map((mint) => new PublicKey(mint))
-    );
-    accounts.forEach((info, idx) => {
-      if (!info) return;
-      const decoded = MintLayout.decode(info.data);
-      mintInfos.set(batch[idx], decoded.decimals);
-    });
-  }
-
-  const balances: RpcBalance[] = [
-    {
-      mint: "SOL",
-      symbol: "SOL",
-      name: "solana",
-      amount: formatAmount(new BN(solBalance.toString()), 9),
-      raw: solBalance.toString(),
-      decimals: 9
-    }
-  ];
-
-  tokenAccounts.forEach((account) => {
-    const mint = account.mint.toBase58();
-    const decimals = mintInfos.get(mint) ?? 0;
-    const raw = new BN(account.amount.toString());
-    if (raw.isZero()) return;
-    const symbol = mint.slice(0, 6);
-    balances.push({
-      mint,
-      symbol,
-      name: symbol,
-      amount: formatAmount(raw, decimals),
-      raw: raw.toString(),
-      decimals
-    });
-  });
-
-  return balances;
-}
 
 function ensureSingleSecretSource(
   sources: Array<{ enabled: boolean; label: string }>
@@ -186,7 +102,7 @@ export function registerWalletCommands(program: Command): void {
         `The default derivation path is ${getDefaultDerivationPath()}.`,
         "Without --unsafe-stdout, the seed phrase is written to a plaintext file with 0600 permissions."
       ],
-      nonInteractive: NON_INTERACTIVE_HELP,
+      automation: AUTOMATION_HELP,
       examples: [
         "raydium wallet create trader",
         `raydium wallet create trader --derivation-path "${getDefaultDerivationPath()}"`,
@@ -263,7 +179,7 @@ export function registerWalletCommands(program: Command): void {
     wallet
       .command("import")
     .description("Import an existing wallet")
-    .argument("<name>")
+    .argument("[name]")
     .option("--private-key-stdin", "Read the private key from stdin")
     .option("--seed-phrase-stdin", "Read the seed phrase from stdin")
     .option("--private-key-file <path>", "Read the private key from a file")
@@ -280,9 +196,9 @@ export function registerWalletCommands(program: Command): void {
         "Choose exactly one secret source flag, or omit them to use an interactive prompt.",
         "Derivation paths apply only to seed phrase imports."
       ],
-      nonInteractive: [
-        NON_INTERACTIVE_HELP,
-        "For scripts, prefer --private-key-stdin or --seed-phrase-stdin over interactive secret entry."
+      automation: [
+        AUTOMATION_HELP,
+        "For automation, prefer --private-key-stdin or --seed-phrase-stdin over interactive secret entry."
       ],
       examples: [
         "printf '%s' 'base58-private-key' | raydium wallet import trading-bot --private-key-stdin",
@@ -294,7 +210,7 @@ export function registerWalletCommands(program: Command): void {
   )
     .action(
       async (
-        name: string,
+        name: string | undefined,
         options: {
           privateKeyStdin?: boolean;
           seedPhraseStdin?: boolean;
@@ -303,6 +219,7 @@ export function registerWalletCommands(program: Command): void {
           derivationPath: string;
         }
       ) => {
+        name = await promptIfMissing(name, "Wallet name");
         ensureSingleSecretSource([
           { enabled: Boolean(options.privateKeyStdin), label: "--private-key-stdin" },
           { enabled: Boolean(options.seedPhraseStdin), label: "--seed-phrase-stdin" },
@@ -430,8 +347,9 @@ export function registerWalletCommands(program: Command): void {
   wallet
     .command("use")
     .description("Set active wallet")
-    .argument("<name>")
-    .action(async (name: string) => {
+    .argument("[name]")
+    .action(async (name?: string) => {
+      name = await promptIfMissing(name, "Wallet name");
       assertValidWalletName(name);
       if (!(await walletExists(name))) {
         logError(`Wallet not found: ${name}`);
@@ -495,7 +413,7 @@ export function registerWalletCommands(program: Command): void {
     wallet
       .command("export")
     .description("Export a private key")
-    .argument("<name>")
+    .argument("[name]")
     .option("--file <path>", "Write the private key to a file with 0600 permissions")
     .option("--unsafe-stdout", "Print the private key to stdout/json (unsafe)"),
     {
@@ -505,9 +423,9 @@ export function registerWalletCommands(program: Command): void {
         "Without --unsafe-stdout, the private key is written to a plaintext file with 0600 permissions.",
         "The command prompts for confirmation before decrypting the wallet."
       ],
-      nonInteractive: [
-        NON_INTERACTIVE_HELP,
-        "Prefer file output so secrets are not exposed in stdout or command logs."
+      automation: [
+        AUTOMATION_HELP,
+        "Prefer file output for agents so secrets are not exposed in stdout or command logs."
       ],
       examples: [
         "raydium wallet export trader",
@@ -521,7 +439,8 @@ export function registerWalletCommands(program: Command): void {
     }
   )
     .action(
-      async (name: string, options: { file?: string; unsafeStdout?: boolean }) => {
+      async (name: string | undefined, options: { file?: string; unsafeStdout?: boolean }) => {
+        name = await promptIfMissing(name, "Wallet name");
         const walletName = resolveWalletIdentifier(name);
         if (!walletName) {
           logError("No wallet specified");

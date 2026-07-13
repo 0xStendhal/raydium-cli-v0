@@ -10,8 +10,14 @@ let cachedGenericStdin: string | undefined;
 let cachedGenericStdinFlag: string | undefined;
 let allowUnsafeSecretFlags = false;
 
+export type ActionRisk = "write" | "dangerous" | "secret";
+
 export function setAssumeYes(enabled: boolean): void {
   assumeYes = enabled;
+}
+
+export function isAssumeYes(): boolean {
+  return assumeYes;
 }
 
 export function setPassword(value?: string): void {
@@ -26,9 +32,16 @@ export function setAllowUnsafeSecretFlags(enabled: boolean): void {
   allowUnsafeSecretFlags = enabled;
 }
 
+export function canPromptInteractively(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY) && !isJsonOutput();
+}
+
 function ensureInteractiveAllowed(): void {
   if (isJsonOutput()) {
     throw new Error("Interactive prompts are disabled with --json. Provide all required flags.");
+  }
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Interactive prompts require a terminal. Provide all required flags for automation.");
   }
 }
 
@@ -134,7 +147,50 @@ export async function promptConfirm(message: string, defaultValue = false): Prom
   return ok;
 }
 
-export async function promptInput(message: string, defaultValue?: string): Promise<string> {
+export function canAssumeYesForAction(
+  risk: ActionRisk,
+  allowExplicitRiskAcknowledgement = false
+): boolean {
+  return risk === "write" || allowExplicitRiskAcknowledgement;
+}
+
+export async function promptActionConfirmation(options: {
+  message: string;
+  risk?: ActionRisk;
+  expectedText?: string;
+  allowExplicitRiskAcknowledgement?: boolean;
+}): Promise<boolean> {
+  const risk = options.risk ?? "write";
+  if (assumeYes && canAssumeYesForAction(risk, options.allowExplicitRiskAcknowledgement)) {
+    return true;
+  }
+
+  ensureInteractiveAllowed();
+  if (risk === "write") {
+    return promptConfirm(options.message, false);
+  }
+
+  const expectedText = options.expectedText;
+  if (!expectedText) {
+    throw new Error(`Typed confirmation text is required for ${risk} actions`);
+  }
+  const { confirmation } = await inquirer.prompt<{ confirmation: string }>([
+    {
+      type: "input",
+      name: "confirmation",
+      message: `${options.message} Type ${expectedText} to continue`,
+      validate: (input: string) =>
+        input === expectedText ? true : `Enter ${expectedText} exactly, or press Ctrl+C to cancel`
+    }
+  ]);
+  return confirmation === expectedText;
+}
+
+export async function promptInput(
+  message: string,
+  defaultValue?: string,
+  validate?: (input: string) => true | string
+): Promise<string> {
   ensureInteractiveAllowed();
   const { value } = await inquirer.prompt<{ value: string }>([
     {
@@ -142,10 +198,53 @@ export async function promptInput(message: string, defaultValue?: string): Promi
       name: "value",
       message,
       default: defaultValue,
-      validate: (input: string) => (input ? true : "Value is required")
+      validate: (input: string) => {
+        if (!input) return "Value is required";
+        return validate ? validate(input) : true;
+      }
     }
   ]);
 
+  return value;
+}
+
+/**
+ * Resolve a required command input without forcing it into the command line.
+ * Explicit values remain useful for scripts; interactive users are prompted
+ * when they omit the value.
+ */
+export async function promptIfMissing(
+  value: string | undefined,
+  message: string,
+  validate?: (input: string) => true | string
+): Promise<string> {
+  return value !== undefined && value.trim() !== ""
+    ? value
+    : promptInput(message, undefined, validate);
+}
+
+export async function promptNumberIfMissing(
+  value: string | undefined,
+  message: string,
+  validate: (input: string) => true | string = (input) =>
+    Number.isFinite(Number(input)) ? true : "Enter a valid number"
+): Promise<string> {
+  return promptIfMissing(value, message, validate);
+}
+
+export async function promptSelect<T extends string>(
+  message: string,
+  choices: Array<{ name: string; value: T }>
+): Promise<T> {
+  ensureInteractiveAllowed();
+  const { value } = await inquirer.prompt<{ value: T }>([
+    {
+      type: "list",
+      name: "value",
+      message,
+      choices
+    }
+  ]);
   return value;
 }
 

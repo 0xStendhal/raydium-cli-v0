@@ -8,6 +8,7 @@ const EXPLORER_VALUES: Explorer[] = ["solscan", "solanaFm", "solanaExplorer"];
 const CLUSTER_VALUES: Cluster[] = ["mainnet", "devnet"];
 const CONFIG_DIR_MODE = 0o700;
 const CONFIG_FILE_MODE = 0o600;
+const SECRET_CONFIG_KEYS = new Set<keyof ConfigData>(["pinata-jwt"]);
 
 export async function ensureConfigDir(): Promise<void> {
   await fs.mkdir(CONFIG_DIR, { recursive: true });
@@ -39,6 +40,20 @@ export async function saveConfig(config: ConfigData): Promise<void> {
 
 export function isValidConfigKey(key: string): key is keyof ConfigData {
   return Object.prototype.hasOwnProperty.call(DEFAULT_CONFIG, key);
+}
+
+export function redactConfigValue(key: keyof ConfigData, value: ConfigData[keyof ConfigData]): ConfigData[keyof ConfigData] | string {
+  if (!SECRET_CONFIG_KEYS.has(key)) return value;
+  return value ? "<redacted>" : null;
+}
+
+export function redactConfig(config: ConfigData): Record<keyof ConfigData, ConfigData[keyof ConfigData] | string> {
+  return Object.fromEntries(
+    Object.entries(config).map(([key, value]) => [
+      key,
+      redactConfigValue(key as keyof ConfigData, value as ConfigData[keyof ConfigData])
+    ])
+  ) as Record<keyof ConfigData, ConfigData[keyof ConfigData] | string>;
 }
 
 export function parseConfigValue(key: keyof ConfigData, value: string): ConfigData[keyof ConfigData] {

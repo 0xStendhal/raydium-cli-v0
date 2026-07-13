@@ -16,10 +16,10 @@ import { getApiUrlsForCluster } from "../../lib/api-urls";
 import { loadConfig } from "../../lib/config-manager";
 import { getConfiguredCluster, loadRaydium } from "../../lib/raydium-client";
 import { decryptWallet, resolveWalletIdentifier } from "../../lib/wallet-manager";
-import { promptConfirm, promptPassword } from "../../lib/prompt";
+import { promptConfirm, promptIfMissing, promptNumberIfMissing, promptPassword, promptSelect } from "../../lib/prompt";
 import { isJsonOutput, logError, logErrorWithDebug, logInfo, logJson, logSuccess, withSpinner } from "../../lib/output";
 import { uploadTokenMetadata } from "../../lib/ipfs";
-import { addRichHelp, NON_INTERACTIVE_HELP, PASSWORD_AUTH_HELP } from "../../lib/help";
+import { addRichHelp, AUTOMATION_HELP, PASSWORD_AUTH_HELP } from "../../lib/help";
 
 const NATIVE_MINT = new PublicKey("So11111111111111111111111111111111111111112");
 
@@ -293,9 +293,12 @@ export function registerLaunchpadCommands(program: Command): void {
     .option("--usd1", "Use USD1 as quote token instead of SOL (only with --mint)")
     .action(async (options: { mint?: string; pool?: string; usd1?: boolean }) => {
       if (!options.mint && !options.pool) {
-        logError("Must specify either --mint or --pool");
-        process.exitCode = 1;
-        return;
+        const mode = await promptSelect("How should the pool be located?", [
+          { name: "Token mint (derive pool)", value: "mint" },
+          { name: "Pool address", value: "pool" }
+        ]);
+        if (mode === "mint") options.mint = await promptIfMissing(undefined, "Token mint address");
+        else options.pool = await promptIfMissing(undefined, "Pool address");
       }
 
       if (options.mint && options.pool) {
@@ -448,8 +451,8 @@ export function registerLaunchpadCommands(program: Command): void {
     launchpad
       .command("buy")
       .description("Buy tokens from a launchpad pool")
-      .requiredOption("--mint <address>", "Token mint address (mintA)")
-      .requiredOption("--amount <number>", "Amount of quote token to spend")
+      .option("--mint <address>", "Token mint address (mintA; prompted when omitted)")
+      .option("--amount <number>", "Amount of quote token to spend (prompted when omitted)")
       .option("--mint-b <address>", "Quote token mint to spend (defaults to auto-discovery across SOL, USD1, USDC)")
       .option("--slippage <percent>", "Slippage tolerance in percent")
       .option("--priority-fee <sol>", "Priority fee in SOL")
@@ -466,7 +469,7 @@ export function registerLaunchpadCommands(program: Command): void {
         "The command discovers the pool by trying supported quote tokens for the configured cluster.",
         "Current quote-token discovery checks SOL, USD1, and USDC."
       ],
-      nonInteractive: NON_INTERACTIVE_HELP,
+      automation: AUTOMATION_HELP,
       examples: [
         "raydium launchpad buy --mint <token-mint> --amount 0.25",
         "raydium launchpad buy --mint <token-mint> --mint-b EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 100",
@@ -475,13 +478,17 @@ export function registerLaunchpadCommands(program: Command): void {
     }
   )
     .action(async (options: {
-      mint: string;
-      amount: string;
+      mint?: string;
+      amount?: string;
       mintB?: string;
       slippage?: string;
       priorityFee?: string;
       debug?: boolean;
     }) => {
+      options.mint = await promptIfMissing(options.mint, "Token mint address");
+      options.amount = await promptNumberIfMissing(options.amount, "Amount of quote token to spend", (input) =>
+        Number.isFinite(Number(input)) && Number(input) > 0 ? true : "Enter a positive amount"
+      );
       const config = await loadConfig({ createIfMissing: true });
 
       // Validate slippage
@@ -609,7 +616,7 @@ export function registerLaunchpadCommands(program: Command): void {
       try {
         const result = await withSpinner("Building buy transaction", async () => {
           // Convert amount using the correct decimals for the quote token
-          const buyAmountRaw = parseTokenAmountToBN(options.amount, mintBDecimals, "amount");
+          const buyAmountRaw = parseTokenAmountToBN(options.amount!, mintBDecimals, "amount");
 
           return raydium.launchpad.buyToken({
             mintA,
@@ -690,21 +697,25 @@ export function registerLaunchpadCommands(program: Command): void {
   launchpad
     .command("sell")
     .description("Sell tokens back to a launchpad pool")
-    .requiredOption("--mint <address>", "Token mint address (mintA)")
-    .requiredOption("--amount <number>", "Amount of tokens to sell")
+      .option("--mint <address>", "Token mint address (mintA; prompted when omitted)")
+      .option("--amount <number>", "Amount of tokens to sell (prompted when omitted)")
     .option("--mint-b <address>", "Quote token mint to receive (defaults to auto-discovery across SOL, USD1, USDC)")
     .option("--slippage <percent>", "Slippage tolerance in percent")
     .option("--priority-fee <sol>", "Priority fee in SOL")
     .option("--debug", "Print full error on failure")
     .addHelpText("after", "\nAuth:\n  Use --password-stdin or the interactive password prompt. --password requires --unsafe-secret-flags.\n")
     .action(async (options: {
-      mint: string;
-      amount: string;
+      mint?: string;
+      amount?: string;
       mintB?: string;
       slippage?: string;
       priorityFee?: string;
       debug?: boolean;
     }) => {
+      options.mint = await promptIfMissing(options.mint, "Token mint address");
+      options.amount = await promptNumberIfMissing(options.amount, "Amount of tokens to sell", (input) =>
+        Number.isFinite(Number(input)) && Number(input) > 0 ? true : "Enter a positive amount"
+      );
       const config = await loadConfig({ createIfMissing: true });
 
       // Validate slippage
@@ -833,7 +844,7 @@ export function registerLaunchpadCommands(program: Command): void {
       try {
         const result = await withSpinner("Building sell transaction", async () => {
           // Convert amount using the correct decimals for mintA
-          const sellAmountRaw = parseTokenAmountToBN(options.amount, mintADecimals, "amount");
+          const sellAmountRaw = parseTokenAmountToBN(options.amount!, mintADecimals, "amount");
 
           return raydium.launchpad.sellToken({
             mintA,
@@ -910,7 +921,7 @@ export function registerLaunchpadCommands(program: Command): void {
   launchpad
     .command("create-platform")
     .description("Create a new launchpad platform configuration")
-    .requiredOption("--name <string>", "Platform name")
+      .option("--name <string>", "Platform name (prompted when omitted)")
     .option("--fee-rate <bps>", "Platform fee in basis points (default: 100 = 1%)", "100")
     .option("--creator-fee-rate <bps>", "Creator fee in basis points (default: 50 = 0.5%)", "50")
     .option("--platform-scale <percent>", "Platform LP % on migration (default: 50)", "50")
@@ -922,7 +933,7 @@ export function registerLaunchpadCommands(program: Command): void {
     .option("--debug", "Print full error on failure")
     .addHelpText("after", "\nAuth:\n  Use --password-stdin or the interactive password prompt. --password requires --unsafe-secret-flags.\n")
     .action(async (options: {
-      name: string;
+      name?: string;
       feeRate: string;
       creatorFeeRate: string;
       platformScale: string;
@@ -933,6 +944,7 @@ export function registerLaunchpadCommands(program: Command): void {
       priorityFee?: string;
       debug?: boolean;
     }) => {
+      options.name = await promptIfMissing(options.name, "Platform name");
       const config = await loadConfig({ createIfMissing: true });
 
       // Validate fee rates
@@ -1084,7 +1096,7 @@ export function registerLaunchpadCommands(program: Command): void {
             transferFeeExtensionAuth: owner.publicKey,
             feeRate: feeRateBN,
             creatorFeeRate: creatorFeeRateBN,
-            name: options.name,
+            name: options.name!,
             web: options.web ?? "",
             img: options.img ?? "",
             platformVestingScale: new BN(0),
@@ -1134,9 +1146,9 @@ export function registerLaunchpadCommands(program: Command): void {
     launchpad
       .command("create")
       .description("Launch a new token with a bonding curve")
-      .requiredOption("--platform-id <address>", "Platform config address")
-      .requiredOption("--name <string>", "Token name")
-      .requiredOption("--symbol <string>", "Token symbol")
+      .option("--platform-id <address>", "Platform config address (prompted when omitted)")
+      .option("--name <string>", "Token name (prompted when omitted)")
+      .option("--symbol <string>", "Token symbol (prompted when omitted)")
       .option("--image <path>", "Path to token image (uploads to IPFS)")
       .option("--uri <string>", "Token metadata URI (use instead of --image if you have a URI)")
       .option("--description <string>", "Token description")
@@ -1163,7 +1175,7 @@ export function registerLaunchpadCommands(program: Command): void {
         "--config-id is auto-detected if omitted.",
         "--decimals defaults to 6 and --slippage defaults to 1."
       ],
-      nonInteractive: NON_INTERACTIVE_HELP,
+      automation: AUTOMATION_HELP,
       examples: [
         "raydium launchpad create --platform-id <platform-id> --name 'My Token' --symbol MTK --image ./token.png",
         "raydium launchpad create --platform-id <platform-id> --name 'My Token' --symbol MTK --uri https://example.com/meta.json --buy-amount 0.25"
@@ -1172,9 +1184,9 @@ export function registerLaunchpadCommands(program: Command): void {
     }
   )
     .action(async (options: {
-      platformId: string;
-      name: string;
-      symbol: string;
+      platformId?: string;
+      name?: string;
+      symbol?: string;
       image?: string;
       uri?: string;
       description?: string;
@@ -1188,15 +1200,22 @@ export function registerLaunchpadCommands(program: Command): void {
       priorityFee?: string;
       debug?: boolean;
     }) => {
+      options.platformId = await promptIfMissing(options.platformId, "Platform config address");
+      options.name = await promptIfMissing(options.name, "Token name");
+      options.symbol = await promptIfMissing(options.symbol, "Token symbol");
       const config = await loadConfig({ createIfMissing: true });
 
       // Validate that either --image or --uri is provided
       if (!options.image && !options.uri) {
-        logError("Either --image or --uri is required");
-        logInfo("  --image <path>  Path to local image file (auto-uploads to IPFS)");
-        logInfo("  --uri <url>     Pre-hosted metadata URI");
-        process.exitCode = 1;
-        return;
+        const source = await promptSelect("How should token metadata be provided?", [
+          { name: "Upload an image and generate metadata", value: "image" },
+          { name: "Use an existing metadata URI", value: "uri" }
+        ]);
+        if (source === "image") {
+          options.image = await promptIfMissing(undefined, "Token image path");
+        } else {
+          options.uri = await promptIfMissing(undefined, "Metadata URI");
+        }
       }
 
       if (options.image && options.uri) {
@@ -1297,8 +1316,8 @@ export function registerLaunchpadCommands(program: Command): void {
           const result = await withSpinner("Uploading to IPFS", () =>
             uploadTokenMetadata({
               imagePath: options.image!,
-              name: options.name,
-              symbol: options.symbol,
+              name: options.name!,
+              symbol: options.symbol!,
               description: options.description,
               twitter: options.twitter,
               telegram: options.telegram,
@@ -1434,8 +1453,8 @@ export function registerLaunchpadCommands(program: Command): void {
         logJson({
           action: "create",
           token: {
-            name: options.name,
-            symbol: options.symbol,
+            name: options.name!,
+            symbol: options.symbol!,
             uri: metadataUri,
             image: imageUrl,
             decimals,
@@ -1479,8 +1498,8 @@ export function registerLaunchpadCommands(program: Command): void {
         const result = await withSpinner("Building transaction", async () => {
           return raydium.launchpad.createLaunchpad({
             mintA: mintKeypair.publicKey,
-            name: options.name,
-            symbol: options.symbol,
+            name: options.name!,
+            symbol: options.symbol!,
             uri: metadataUri,
             decimals,
             platformId,
@@ -1540,17 +1559,18 @@ export function registerLaunchpadCommands(program: Command): void {
   launchpad
     .command("claim-fees")
     .description("Claim platform fees from launchpad")
-    .requiredOption("--platform-id <address>", "Platform config address")
+    .option("--platform-id <address>", "Platform config address (prompted when omitted)")
     .option("--mint-b <address>", "Quote token mint (default: SOL)")
     .option("--priority-fee <sol>", "Priority fee in SOL")
     .option("--debug", "Print full error on failure")
     .addHelpText("after", "\nAuth:\n  Use --password-stdin or the interactive password prompt. --password requires --unsafe-secret-flags.\n")
     .action(async (options: {
-      platformId: string;
+      platformId?: string;
       mintB?: string;
       priorityFee?: string;
       debug?: boolean;
     }) => {
+      options.platformId = await promptIfMissing(options.platformId, "Platform config address");
       const config = await loadConfig({ createIfMissing: true });
 
       // Validate platform ID
@@ -1699,12 +1719,13 @@ export function registerLaunchpadCommands(program: Command): void {
   launchpad
     .command("fee-balance")
     .description("Check platform fee balances available to claim")
-    .requiredOption("--platform-id <address>", "Platform config address")
+    .option("--platform-id <address>", "Platform config address (prompted when omitted)")
     .option("--mint-b <address>", "Quote token mint (default: checks SOL, USD1, USDC)")
     .action(async (options: {
-      platformId: string;
+      platformId?: string;
       mintB?: string;
     }) => {
+      options.platformId = await promptIfMissing(options.platformId, "Platform config address");
       const config = await loadConfig({ createIfMissing: true });
 
       // Validate platform ID
