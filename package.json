@@ -21,6 +21,7 @@
   "scripts": {
     "postinstall": "node scripts/force-bigint-buffer-js.js",
     "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
     "test": "npm run build && node --test dist/lib/*.test.js tests/*.test.js",
     "dev": "ts-node src/index.ts",
     "prepublishOnly": "npm run build"
