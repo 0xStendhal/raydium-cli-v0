@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.logGuidedError = exports.logErrorWithDebug = exports.getErrorDetails = exports.getErrorMessage = exports.withSpinner = exports.logDebug = exports.logError = exports.logSuccess = exports.logInfo = exports.logJson = exports.isDebugOutput = exports.setDebugOutput = exports.setQuietOutput = exports.isJsonOutput = exports.setJsonOutput = void 0;
+exports.logGuidedError = exports.logErrorWithDebug = exports.getErrorDetails = exports.getErrorMessage = exports.withSpinner = exports.logDebug = exports.logError = exports.logTable = exports.renderTable = exports.logMuted = exports.logSuccess = exports.logInfo = exports.logJson = exports.isDebugOutput = exports.setDebugOutput = exports.setQuietOutput = exports.isJsonOutput = exports.setJsonOutput = void 0;
 const chalk_1 = __importDefault(require("chalk"));
 const ora_1 = __importDefault(require("ora"));
 const util_1 = require("util");
@@ -46,6 +46,47 @@ function logSuccess(message) {
     }
 }
 exports.logSuccess = logSuccess;
+/** Muted, secondary line (e.g. totals, hints). Suppressed in json/quiet modes. */
+function logMuted(message) {
+    if (!jsonOutput && !quietOutput) {
+        console.log(chalk_1.default.gray(message));
+    }
+}
+exports.logMuted = logMuted;
+// eslint-disable-next-line no-control-regex
+const ANSI_PATTERN = /\[[0-9;]*m/g;
+function visibleWidth(value) {
+    return value.replace(ANSI_PATTERN, "").length;
+}
+/**
+ * Render an aligned, colorized table. Headers are dimmed; cells keep any
+ * chalk styling the caller applied (width is measured ignoring ANSI codes).
+ * Returns "" when there are no rows.
+ */
+function renderTable(columns, rows) {
+    if (rows.length === 0)
+        return "";
+    const widths = columns.map((col, i) => {
+        const cellMax = rows.reduce((max, row) => Math.max(max, visibleWidth(row[i] ?? "")), 0);
+        return Math.max(visibleWidth(col.header), cellMax);
+    });
+    const pad = (value, width, align) => {
+        const spaces = " ".repeat(Math.max(0, width - visibleWidth(value)));
+        return align === "right" ? spaces + value : value + spaces;
+    };
+    const headerLine = columns
+        .map((col, i) => chalk_1.default.bold.dim(pad(col.header, widths[i], col.align ?? "left")))
+        .join("  ");
+    const bodyLines = rows.map((row) => columns.map((col, i) => pad(row[i] ?? "", widths[i], col.align ?? "left")).join("  "));
+    return [headerLine, ...bodyLines].join("\n");
+}
+exports.renderTable = renderTable;
+function logTable(columns, rows) {
+    const rendered = renderTable(columns, rows);
+    if (rendered)
+        logInfo(rendered);
+}
+exports.logTable = logTable;
 function logError(message, details) {
     if (jsonOutput) {
         logJson({ error: message, details });

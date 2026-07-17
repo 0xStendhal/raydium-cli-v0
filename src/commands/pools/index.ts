@@ -2,7 +2,18 @@ import { Command } from "commander";
 import { PoolFetchType } from "@raydium-io/raydium-sdk-v2";
 
 import { loadRaydium } from "../../lib/raydium-client";
-import { isJsonOutput, logInfo, logJson, withSpinner } from "../../lib/output";
+import { isJsonOutput, logInfo, logJson, logTable, withSpinner } from "../../lib/output";
+
+/** Compact USD formatting: 1.2M, 3.4K, 950. */
+function formatCompactUsd(value: unknown): string {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return "—";
+  const abs = Math.abs(num);
+  if (abs >= 1e9) return `$${(num / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `$${(num / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `$${(num / 1e3).toFixed(1)}K`;
+  return `$${num.toFixed(0)}`;
+}
 
 type PoolTypeOption = "all" | "standard" | "concentrated";
 
@@ -80,13 +91,33 @@ export function registerPoolCommands(program: Command): void {
 
       logInfo(`Showing ${results.length} pools (total: ${data.count})\n`);
 
-      results.forEach((pool) => {
-        logInfo(`${pool.id} (${pool.type})`);
-        logInfo(`  mintA: ${pool.mintA.address}`);
-        logInfo(`  mintB: ${pool.mintB.address}`);
-        if ("lpMint" in pool && pool.lpMint) {
-          logInfo(`  lpMint: ${pool.lpMint.address}`);
-        }
+      const rows = results.map((pool) => {
+        const anyPool = pool as unknown as {
+          mintA?: { symbol?: string; address: string };
+          mintB?: { symbol?: string; address: string };
+          tvl?: number;
+          day?: { volume?: number };
+        };
+        const symA = anyPool.mintA?.symbol || `${pool.mintA.address.slice(0, 4)}…`;
+        const symB = anyPool.mintB?.symbol || `${pool.mintB.address.slice(0, 4)}…`;
+        return [
+          `${symA}/${symB}`,
+          pool.type,
+          formatCompactUsd(anyPool.tvl),
+          formatCompactUsd(anyPool.day?.volume),
+          pool.id
+        ];
       });
+
+      logTable(
+        [
+          { header: "Pair" },
+          { header: "Type" },
+          { header: "TVL", align: "right" },
+          { header: "Vol 24h", align: "right" },
+          { header: "Pool ID" }
+        ],
+        rows
+      );
     });
 }
