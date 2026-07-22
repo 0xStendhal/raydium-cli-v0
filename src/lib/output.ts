@@ -42,6 +42,61 @@ export function logSuccess(message: string): void {
   }
 }
 
+/** Muted, secondary line (e.g. totals, hints). Suppressed in json/quiet modes. */
+export function logMuted(message: string): void {
+  if (!jsonOutput && !quietOutput) {
+    console.log(chalk.gray(message));
+  }
+}
+
+export type TableAlign = "left" | "right";
+
+export interface TableColumn {
+  header: string;
+  align?: TableAlign;
+}
+
+// eslint-disable-next-line no-control-regex
+const ANSI_PATTERN = /\[[0-9;]*m/g;
+
+function visibleWidth(value: string): number {
+  return value.replace(ANSI_PATTERN, "").length;
+}
+
+/**
+ * Render an aligned, colorized table. Headers are dimmed; cells keep any
+ * chalk styling the caller applied (width is measured ignoring ANSI codes).
+ * Returns "" when there are no rows.
+ */
+export function renderTable(columns: TableColumn[], rows: string[][]): string {
+  if (rows.length === 0) return "";
+
+  const widths = columns.map((col, i) => {
+    const cellMax = rows.reduce((max, row) => Math.max(max, visibleWidth(row[i] ?? "")), 0);
+    return Math.max(visibleWidth(col.header), cellMax);
+  });
+
+  const pad = (value: string, width: number, align: TableAlign): string => {
+    const spaces = " ".repeat(Math.max(0, width - visibleWidth(value)));
+    return align === "right" ? spaces + value : value + spaces;
+  };
+
+  const headerLine = columns
+    .map((col, i) => chalk.bold.dim(pad(col.header, widths[i], col.align ?? "left")))
+    .join("  ");
+
+  const bodyLines = rows.map((row) =>
+    columns.map((col, i) => pad(row[i] ?? "", widths[i], col.align ?? "left")).join("  ")
+  );
+
+  return [headerLine, ...bodyLines].join("\n");
+}
+
+export function logTable(columns: TableColumn[], rows: string[][]): void {
+  const rendered = renderTable(columns, rows);
+  if (rendered) logInfo(rendered);
+}
+
 export function logError(message: string, details?: unknown): void {
   if (jsonOutput) {
     logJson({ error: message, details });

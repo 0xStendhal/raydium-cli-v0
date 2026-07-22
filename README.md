@@ -79,7 +79,8 @@ raydium wallet import <name> --seed-phrase-file /secure/path/seed.txt
 raydium wallet import <name> --derivation-path "m/44'/501'/0'/0'"
 raydium wallet list                                   # list all wallets
 raydium wallet use <name>                             # set active wallet
-raydium wallet balance [name]                         # show SOL + token balances
+raydium wallet balance [name]                         # SOL + token balances with USD values and a portfolio total
+raydium wallet balance --all                           # include dust (< $0.01) and zero-value tokens
 raydium wallet export <name>                          # writes private key to a 0600 file by default
 raydium wallet export <name> --file /secure/path/private-key.txt
 ```

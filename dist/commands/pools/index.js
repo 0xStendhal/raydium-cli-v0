@@ -4,6 +4,20 @@ exports.registerPoolCommands = void 0;
 const raydium_sdk_v2_1 = require("@raydium-io/raydium-sdk-v2");
 const raydium_client_1 = require("../../lib/raydium-client");
 const output_1 = require("../../lib/output");
+/** Compact USD formatting: 1.2M, 3.4K, 950. */
+function formatCompactUsd(value) {
+    const num = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(num))
+        return "—";
+    const abs = Math.abs(num);
+    if (abs >= 1e9)
+        return `$${(num / 1e9).toFixed(1)}B`;
+    if (abs >= 1e6)
+        return `$${(num / 1e6).toFixed(1)}M`;
+    if (abs >= 1e3)
+        return `$${(num / 1e3).toFixed(1)}K`;
+    return `$${num.toFixed(0)}`;
+}
 function mapPoolType(type) {
     switch (type) {
         case "standard":
@@ -64,14 +78,25 @@ function registerPoolCommands(program) {
             return;
         }
         (0, output_1.logInfo)(`Showing ${results.length} pools (total: ${data.count})\n`);
-        results.forEach((pool) => {
-            (0, output_1.logInfo)(`${pool.id} (${pool.type})`);
-            (0, output_1.logInfo)(`  mintA: ${pool.mintA.address}`);
-            (0, output_1.logInfo)(`  mintB: ${pool.mintB.address}`);
-            if ("lpMint" in pool && pool.lpMint) {
-                (0, output_1.logInfo)(`  lpMint: ${pool.lpMint.address}`);
-            }
+        const rows = results.map((pool) => {
+            const anyPool = pool;
+            const symA = anyPool.mintA?.symbol || `${pool.mintA.address.slice(0, 4)}…`;
+            const symB = anyPool.mintB?.symbol || `${pool.mintB.address.slice(0, 4)}…`;
+            return [
+                `${symA}/${symB}`,
+                pool.type,
+                formatCompactUsd(anyPool.tvl),
+                formatCompactUsd(anyPool.day?.volume),
+                pool.id
+            ];
         });
+        (0, output_1.logTable)([
+            { header: "Pair" },
+            { header: "Type" },
+            { header: "TVL", align: "right" },
+            { header: "Vol 24h", align: "right" },
+            { header: "Pool ID" }
+        ], rows);
     });
 }
 exports.registerPoolCommands = registerPoolCommands;

@@ -28,20 +28,33 @@ import {
   readSecretFromFile,
   readSecretFromStdin
 } from "../../lib/prompt";
+import chalk from "chalk";
+
 import {
   isJsonOutput,
   logInfo,
   logJson,
+  logMuted,
   logSuccess,
+  logTable,
   logError,
   withSpinner
 } from "../../lib/output";
 import { addRichHelp, AUTOMATION_HELP, PASSWORD_AUTH_HELP } from "../../lib/help";
-import { fetchRpcBalances } from "../../lib/balances";
+import { fetchRpcBalances, RpcBalance } from "../../lib/balances";
+import { getTokenPrices } from "../../lib/token-price";
 
 const SECRET_EXPORTS_DIR = path.join(CONFIG_DIR, "exports");
 const SECRET_EXPORT_DIR_MODE = 0o700;
 const SECRET_EXPORT_FILE_MODE = 0o600;
+const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
+
+/** Format a USD amount. Small prices (< $1) get more precision. */
+function formatUsd(value: number, isPrice = false): string {
+  if (!Number.isFinite(value)) return "—";
+  const digits = isPrice && Math.abs(value) < 1 ? 6 : 2;
+  return `$${value.toFixed(digits)}`;
+}
 
 function ensureSingleSecretSource(
   sources: Array<{ enabled: boolean; label: string }>
@@ -371,7 +384,8 @@ export function registerWalletCommands(program: Command): void {
     .command("balance")
     .description("Show wallet balances")
     .argument("[name]")
-    .action(async (name?: string) => {
+    .option("--all", "include dust and zero-value tokens")
+    .action(async (name: string | undefined, options: { all?: boolean }) => {
       const config = await loadConfig({ createIfMissing: true });
       const walletName = resolveWalletIdentifier(name, config.activeWallet);
       if (!walletName) {
@@ -384,8 +398,26 @@ export function registerWalletCommands(program: Command): void {
       const walletAddress = owner.toBase58();
       const balances = await withSpinner("Fetching balances", () => fetchRpcBalances(owner));
 
+      // Price lookup (best-effort; empty when no source can price the mints).
+      const priceMints = balances.map((item) =>
+        item.mint === "SOL" ? WRAPPED_SOL_MINT : item.mint
+      );
+      const prices = await getTokenPrices(priceMints);
+      const priceFor = (item: RpcBalance): number | null =>
+        prices.get(item.mint === "SOL" ? WRAPPED_SOL_MINT : item.mint) ?? null;
+      const valueFor = (item: RpcBalance): number | null => {
+        const price = priceFor(item);
+        return price == null ? null : Number(item.amount) * price;
+      };
+
       if (isJsonOutput()) {
-        logJson({ wallet: walletName, publicKey: walletAddress, tokens: balances });
+        const tokens = balances.map((item) => ({
+          ...item,
+          priceUsd: priceFor(item),
+          valueUsd: valueFor(item)
+        }));
+        const totalUsd = tokens.reduce((sum, t) => sum + (t.valueUsd ?? 0), 0);
+        logJson({ wallet: walletName, publicKey: walletAddress, totalUsd, tokens });
         return;
       }
 
@@ -396,17 +428,71 @@ export function registerWalletCommands(program: Command): void {
         return;
       }
 
-      balances.forEach((item) => {
-        if (item.mint === "SOL") {
-          logInfo(`SOL: ${item.amount}`);
-          return;
-        }
+      const havePrices = balances.some((item) => priceFor(item) != null);
 
-        const label =
-          item.name && item.name !== item.symbol ? `${item.symbol} (${item.name})` : item.symbol;
-        logInfo(`${label}: ${item.amount}`);
-        logInfo(`  Mint: ${item.mint}`);
+      // Sort by USD value (desc); keep SOL pinned to the top for orientation.
+      const sorted = [...balances].sort((a, b) => {
+        if (a.mint === "SOL") return -1;
+        if (b.mint === "SOL") return 1;
+        return (valueFor(b) ?? 0) - (valueFor(a) ?? 0);
       });
+
+      // Collapse dust (< $0.01) unless --all; tokens with unknown price are kept.
+      const DUST_USD = 0.01;
+      let hiddenDust = 0;
+      const visible = sorted.filter((item) => {
+        if (options.all || item.mint === "SOL") return true;
+        const value = valueFor(item);
+        if (value != null && value < DUST_USD) {
+          hiddenDust += 1;
+          return false;
+        }
+        return true;
+      });
+
+      const labelFor = (item: RpcBalance): string =>
+        item.name && item.name !== item.symbol ? `${item.symbol} (${item.name})` : item.symbol;
+
+      logInfo("");
+      if (havePrices) {
+        const rows = visible.map((item) => {
+          const price = priceFor(item);
+          const value = valueFor(item);
+          return [
+            labelFor(item),
+            item.amount,
+            price == null ? "—" : formatUsd(price, true),
+            value == null ? "—" : formatUsd(value),
+            item.mint === "SOL" ? "native" : item.mint
+          ];
+        });
+        logTable(
+          [
+            { header: "Token" },
+            { header: "Amount", align: "right" },
+            { header: "Price", align: "right" },
+            { header: "Value", align: "right" },
+            { header: "Mint" }
+          ],
+          rows
+        );
+        const total = balances.reduce((sum, item) => sum + (valueFor(item) ?? 0), 0);
+        logInfo("");
+        logInfo(`Total value: ${chalk.bold(formatUsd(total))}`);
+      } else {
+        logTable(
+          [{ header: "Token" }, { header: "Amount", align: "right" }, { header: "Mint" }],
+          visible.map((item) => [
+            labelFor(item),
+            item.amount,
+            item.mint === "SOL" ? "native" : item.mint
+          ])
+        );
+      }
+
+      if (hiddenDust > 0) {
+        logMuted(`  ${hiddenDust} dust token${hiddenDust === 1 ? "" : "s"} hidden (use --all to show)`);
+      }
     });
 
   addRichHelp(
