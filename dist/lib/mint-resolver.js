@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resolveMintPublicKey = exports.resolveMintAddress = exports.WRAPPED_SOL_MINT = void 0;
+exports.getRaydiumMintMetadata = exports.resolveMintPublicKey = exports.resolveMintAddress = exports.WRAPPED_SOL_MINT = void 0;
 const web3_js_1 = require("@solana/web3.js");
 const api_urls_1 = require("./api-urls");
 const config_manager_1 = require("./config-manager");
@@ -75,3 +75,20 @@ async function resolveMintPublicKey(value, options = {}) {
     return new web3_js_1.PublicKey(await resolveMintAddress(value, options));
 }
 exports.resolveMintPublicKey = resolveMintPublicKey;
+async function getRaydiumMintMetadata(mintAddresses, options = {}) {
+    const result = new Map();
+    const requested = new Set(mintAddresses
+        .map((mint) => tryParsePublicKey(mint) ?? (mint.toUpperCase() === "SOL" ? exports.WRAPPED_SOL_MINT : mint))
+        .filter(Boolean));
+    if (requested.size === 0)
+        return result;
+    const cluster = options.cluster ?? (await (0, config_manager_1.loadConfig)({ createIfMissing: true })).cluster;
+    const { mintList, blockList } = await fetchRaydiumMintList(cluster, options.fetcher ?? fetch);
+    for (const token of mintList) {
+        if (requested.has(token.address) && !blockList.has(token.address)) {
+            result.set(token.address, token);
+        }
+    }
+    return result;
+}
+exports.getRaydiumMintMetadata = getRaydiumMintMetadata;

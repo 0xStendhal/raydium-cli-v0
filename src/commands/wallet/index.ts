@@ -43,6 +43,7 @@ import {
 import { addRichHelp, AUTOMATION_HELP, PASSWORD_AUTH_HELP } from "../../lib/help";
 import { fetchRpcBalances, RpcBalance } from "../../lib/balances";
 import { getTokenPrices } from "../../lib/token-price";
+import { getRaydiumMintMetadata } from "../../lib/mint-resolver";
 
 const SECRET_EXPORTS_DIR = path.join(CONFIG_DIR, "exports");
 const SECRET_EXPORT_DIR_MODE = 0o700;
@@ -403,6 +404,25 @@ export function registerWalletCommands(program: Command): void {
         item.mint === "SOL" ? WRAPPED_SOL_MINT : item.mint
       );
       const prices = await getTokenPrices(priceMints);
+      let mintMetadata = new Map<string, { symbol?: string; name?: string }>();
+      try {
+        mintMetadata = await getRaydiumMintMetadata(priceMints, { cluster: config.cluster });
+      } catch {
+        // Token labels are best-effort; keep RPC fallback labels if Raydium metadata is unavailable.
+      }
+      const displayBalance = (item: RpcBalance): RpcBalance => {
+        if (item.mint === "SOL") return item;
+        const mint = item.mint === "SOL" ? WRAPPED_SOL_MINT : item.mint;
+        const metadata = mintMetadata.get(mint);
+        return metadata
+          ? {
+              ...item,
+              symbol: metadata.symbol || item.symbol,
+              name: metadata.name || metadata.symbol || item.name
+            }
+          : item;
+      };
+      const displayBalances = balances.map(displayBalance);
       const priceFor = (item: RpcBalance): number | null =>
         prices.get(item.mint === "SOL" ? WRAPPED_SOL_MINT : item.mint) ?? null;
       const valueFor = (item: RpcBalance): number | null => {
@@ -411,7 +431,7 @@ export function registerWalletCommands(program: Command): void {
       };
 
       if (isJsonOutput()) {
-        const tokens = balances.map((item) => ({
+        const tokens = displayBalances.map((item) => ({
           ...item,
           priceUsd: priceFor(item),
           valueUsd: valueFor(item)
@@ -423,15 +443,15 @@ export function registerWalletCommands(program: Command): void {
 
       logInfo(`Wallet: ${walletName}`);
       logInfo(`Public key: ${walletAddress}`);
-      if (balances.length === 0) {
+      if (displayBalances.length === 0) {
         logInfo("No balances found");
         return;
       }
 
-      const havePrices = balances.some((item) => priceFor(item) != null);
+      const havePrices = displayBalances.some((item) => priceFor(item) != null);
 
       // Sort by USD value (desc); keep SOL pinned to the top for orientation.
-      const sorted = [...balances].sort((a, b) => {
+      const sorted = [...displayBalances].sort((a, b) => {
         if (a.mint === "SOL") return -1;
         if (b.mint === "SOL") return 1;
         return (valueFor(b) ?? 0) - (valueFor(a) ?? 0);
@@ -476,7 +496,7 @@ export function registerWalletCommands(program: Command): void {
           ],
           rows
         );
-        const total = balances.reduce((sum, item) => sum + (valueFor(item) ?? 0), 0);
+        const total = displayBalances.reduce((sum, item) => sum + (valueFor(item) ?? 0), 0);
         logInfo("");
         logInfo(`Total value: ${chalk.bold(formatUsd(total))}`);
       } else {

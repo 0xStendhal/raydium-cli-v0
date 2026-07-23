@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveMintAddress, WRAPPED_SOL_MINT } from "./mint-resolver";
+import { getRaydiumMintMetadata, resolveMintAddress, WRAPPED_SOL_MINT } from "./mint-resolver";
 
 const RAY_MINT = "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -73,4 +73,23 @@ test("rejects ambiguous ticker symbols instead of guessing", async () => {
     }),
     /ambiguous/
   );
+});
+
+test("returns Raydium metadata by mint address for wallet display", async () => {
+  const metadata = await getRaydiumMintMetadata([USDC_MINT], {
+    cluster: "mainnet",
+    fetcher: mintListFetcher([{ address: USDC_MINT, symbol: "USDC", name: "USD Coin" }])
+  });
+
+  assert.equal(metadata.get(USDC_MINT)?.symbol, "USDC");
+  assert.equal(metadata.get(USDC_MINT)?.name, "USD Coin");
+});
+
+test("metadata lookup ignores blocklisted mint addresses", async () => {
+  const metadata = await getRaydiumMintMetadata([USDC_MINT], {
+    cluster: "mainnet",
+    fetcher: mintListFetcher([{ address: USDC_MINT, symbol: "USDC", name: "USD Coin" }], [USDC_MINT])
+  });
+
+  assert.equal(metadata.has(USDC_MINT), false);
 });

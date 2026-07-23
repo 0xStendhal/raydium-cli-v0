@@ -62,3 +62,18 @@ function mintListFetcher(tokens, blockList = []) {
         ])
     }), /ambiguous/);
 });
+(0, node_test_1.default)("returns Raydium metadata by mint address for wallet display", async () => {
+    const metadata = await (0, mint_resolver_1.getRaydiumMintMetadata)([USDC_MINT], {
+        cluster: "mainnet",
+        fetcher: mintListFetcher([{ address: USDC_MINT, symbol: "USDC", name: "USD Coin" }])
+    });
+    strict_1.default.equal(metadata.get(USDC_MINT)?.symbol, "USDC");
+    strict_1.default.equal(metadata.get(USDC_MINT)?.name, "USD Coin");
+});
+(0, node_test_1.default)("metadata lookup ignores blocklisted mint addresses", async () => {
+    const metadata = await (0, mint_resolver_1.getRaydiumMintMetadata)([USDC_MINT], {
+        cluster: "mainnet",
+        fetcher: mintListFetcher([{ address: USDC_MINT, symbol: "USDC", name: "USD Coin" }], [USDC_MINT])
+    });
+    strict_1.default.equal(metadata.has(USDC_MINT), false);
+});

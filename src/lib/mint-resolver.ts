@@ -124,3 +124,26 @@ export async function resolveMintPublicKey(
 ): Promise<PublicKey> {
   return new PublicKey(await resolveMintAddress(value, options));
 }
+
+export async function getRaydiumMintMetadata(
+  mintAddresses: string[],
+  options: ResolveMintOptions = {}
+): Promise<Map<string, RaydiumMintListEntry>> {
+  const result = new Map<string, RaydiumMintListEntry>();
+  const requested = new Set(
+    mintAddresses
+      .map((mint) => tryParsePublicKey(mint) ?? (mint.toUpperCase() === "SOL" ? WRAPPED_SOL_MINT : mint))
+      .filter(Boolean)
+  );
+  if (requested.size === 0) return result;
+
+  const cluster = options.cluster ?? (await loadConfig({ createIfMissing: true })).cluster;
+  const { mintList, blockList } = await fetchRaydiumMintList(cluster, options.fetcher ?? fetch);
+  for (const token of mintList) {
+    if (requested.has(token.address) && !blockList.has(token.address)) {
+      result.set(token.address, token);
+    }
+  }
+
+  return result;
+}
