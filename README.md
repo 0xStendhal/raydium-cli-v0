@@ -1,18 +1,18 @@
-# Raydium CLI
+# raydium-cli
 
 CLI tool for interacting with Raydium on Solana -- swap, manage CLMM/CPMM positions, launch tokens, and more.
 
 ## Install
 
 ```bash
-npm install -g https://github.com/0xStendhal/raydium-cli-v0/archive/refs/heads/main.tar.gz
+npm install -g https://github.com/0xStendhal/raydium-cli/archive/refs/heads/main.tar.gz
 ```
 
 Or install from a local checkout:
 
 ```bash
-git clone https://github.com/0xStendhal/raydium-cli-v0.git
-cd raydium-cli-v0
+git clone https://github.com/0xStendhal/raydium-cli.git
+cd raydium-cli
 npm install
 npm run build
 npm link
@@ -26,16 +26,16 @@ For Codex:
 
 ```bash
 mkdir -p ~/.codex/skills
-git clone https://github.com/0xStendhal/raydium-cli-v0.git /tmp/raydium-cli-v0
-cp -R /tmp/raydium-cli-v0/skills/* ~/.codex/skills/
+git clone https://github.com/0xStendhal/raydium-cli.git /tmp/raydium-cli
+cp -R /tmp/raydium-cli/skills/* ~/.codex/skills/
 ```
 
 For Claude Code:
 
 ```bash
 mkdir -p ~/.claude/skills
-git clone https://github.com/0xStendhal/raydium-cli-v0.git /tmp/raydium-cli-v0
-cp -R /tmp/raydium-cli-v0/skills/* ~/.claude/skills/
+git clone https://github.com/0xStendhal/raydium-cli.git /tmp/raydium-cli
+cp -R /tmp/raydium-cli/skills/* ~/.claude/skills/
 ```
 
 ## Quick Start
