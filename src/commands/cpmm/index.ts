@@ -44,6 +44,7 @@ import {
   parseSlippagePercent
 } from "../../lib/swap-guards";
 import { assertJsonQuoteApproval, withQuoteApprovalId } from "../../lib/quote-approval";
+import { resolveMintPublicKey } from "../../lib/mint-resolver";
 
 // CPMM Lock position API response types
 interface CpmmLockPositionInfo {
@@ -861,8 +862,8 @@ export function registerCpmmCommands(program: Command): void {
     .command("swap")
     .description("Quote or execute a direct CPMM swap")
     .option("--pool-id <address>", "CPMM pool address (prompted when omitted)")
-    .option("--input-mint <address>", "Input token mint for an exact-input swap")
-    .option("--output-mint <address>", "Requested output token mint for an exact-output swap")
+    .option("--input-mint <mint-or-symbol>", "Input token mint or Raydium APIv3 symbol for an exact-input swap")
+    .option("--output-mint <mint-or-symbol>", "Requested output token mint or Raydium APIv3 symbol for an exact-output swap")
     .option("--amount <number>", "Input amount, or requested output with --exact-out (prompted when omitted)")
     .option("--exact-out", "Treat --amount as the requested output amount")
     .option("--slippage <percent>", "Slippage tolerance")
@@ -893,6 +894,7 @@ export function registerCpmmCommands(program: Command): void {
       } else {
         options.inputMint = await promptIfMissing(options.inputMint, "Input token mint");
       }
+      const config = await loadConfig({ createIfMissing: true });
       let poolId: PublicKey;
       let specifiedMint: PublicKey;
       try {
@@ -903,16 +905,17 @@ export function registerCpmmCommands(program: Command): void {
             ? "--exact-out requires --output-mint"
             : "An exact-input swap requires --input-mint");
         }
-        specifiedMint = new PublicKey(requestedMint);
-      } catch {
-        logError(options.exactOut
-          ? "--exact-out requires a valid --output-mint address"
-          : "A valid --pool-id and --input-mint address are required");
+        specifiedMint = await resolveMintPublicKey(requestedMint, { cluster: config.cluster });
+      } catch (error) {
+        logError(error instanceof Error
+          ? error.message
+          : options.exactOut
+            ? "--exact-out requires a valid --output-mint address"
+            : "A valid --pool-id and --input-mint address are required");
         process.exitCode = 1;
         return;
       }
 
-      const config = await loadConfig({ createIfMissing: true });
       let slippagePercent: number;
       let priorityFeeMicroLamports: number;
       try {
@@ -1130,7 +1133,7 @@ export function registerCpmmCommands(program: Command): void {
     .command("add")
     .description("Quote or add proportional liquidity to a CPMM pool")
     .option("--pool-id <address>", "CPMM pool address (prompted when omitted)")
-    .option("--input-mint <address>", "Token mint whose amount you are specifying (prompted when omitted)")
+    .option("--input-mint <mint-or-symbol>", "Token mint or Raydium APIv3 symbol whose amount you are specifying (prompted when omitted)")
     .option("--amount <number>", "Maximum input token amount (prompted when omitted)")
     .option("--slippage <percent>", "Minimum LP-token minting tolerance")
     .option("--allow-high-slippage", "Allow slippage above the 5% safety cap")
@@ -1154,18 +1157,18 @@ export function registerCpmmCommands(program: Command): void {
       options.amount = await promptNumberIfMissing(options.amount, "Maximum input token amount", (input) =>
         Number.isFinite(Number(input)) && Number(input) > 0 ? true : "Enter a positive amount"
       );
+      const config = await loadConfig({ createIfMissing: true });
       let poolId: PublicKey;
       let inputMint: PublicKey;
       try {
         poolId = new PublicKey(options.poolId);
-        inputMint = new PublicKey(options.inputMint);
-      } catch {
-        logError("A valid --pool-id and --input-mint address are required");
+        inputMint = await resolveMintPublicKey(options.inputMint, { cluster: config.cluster });
+      } catch (error) {
+        logError(error instanceof Error ? error.message : "A valid --pool-id and --input-mint address are required");
         process.exitCode = 1;
         return;
       }
 
-      const config = await loadConfig({ createIfMissing: true });
       let slippagePercent: number;
       let priorityFeeMicroLamports: number;
       try {

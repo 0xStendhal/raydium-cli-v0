@@ -35,6 +35,7 @@ import { isJsonOutput, logError, logErrorWithDebug, logGuidedError, logInfo, log
 import { loadRaydium } from "../../lib/raydium-client";
 import { getConnection } from "../../lib/connection";
 import { getApiUrlsForCluster } from "../../lib/api-urls";
+import { resolveMintAddress } from "../../lib/mint-resolver";
 import {
   addRichHelp,
   AUTOMATION_HELP,
@@ -1377,6 +1378,20 @@ export function registerSwapCommands(program: Command): void {
       return;
     }
 
+    try {
+      options.inputMint = await resolveMintAddress(options.inputMint, { cluster: config.cluster });
+      if (options.outputMint) {
+        options.outputMint = await resolveMintAddress(options.outputMint, { cluster: config.cluster });
+      }
+      if (options.outputMint && options.inputMint === options.outputMint) {
+        throw new Error("Input and output tokens must be different");
+      }
+    } catch (error) {
+      logError(error instanceof Error ? error.message : "Failed to resolve token symbol");
+      process.exitCode = 1;
+      return;
+    }
+
     const slippageValue = options.slippage ?? String(config["default-slippage"]);
     const priorityFeeValue = options.priorityFee ?? String(config["priority-fee"]);
     let slippagePercent: number;
@@ -1496,9 +1511,9 @@ export function registerSwapCommands(program: Command): void {
   swapCommand = program
     .command("swap")
     .description("Swap tokens (omit --pool-id for auto-routing via Trade API)")
-    .option("--input-mint <mint>", "Input token mint (interactive selection when omitted)")
+    .option("--input-mint <mint-or-symbol>", "Input token mint or Raydium APIv3 symbol (interactive selection when omitted)")
     .option("--amount <number>", "Input amount, or requested output with --exact-out")
-    .option("--output-mint <mint>", "Output token mint (required if --pool-id not provided)")
+    .option("--output-mint <mint-or-symbol>", "Output token mint or Raydium APIv3 symbol (required if --pool-id not provided)")
     .addOption(
       new Option("--exact-out", "Treat --amount as the exact output amount")
         .conflicts("poolId")
@@ -1541,12 +1556,14 @@ export function registerSwapCommands(program: Command): void {
       defaults: [
         "Cluster-aware Trade API and RPC behavior follows the configured cluster.",
         "--output-mint is required only when auto-routing without --pool-id.",
+        "Mint options also accept unique symbols from Raydium APIv3 /mint/list, such as SOL, RAY, or USDC.",
         "Slippage above 5% and priority fees above 0.01 SOL require explicit acknowledgement flags.",
         "Use So11111111111111111111111111111111111111112 for SOL.",
         "Run raydium swap --help-all to display routing and safety override options."
       ],
       automation: AUTOMATION_HELP,
       examples: [
+        "raydium swap --input-mint SOL --output-mint USDC --amount 0.001",
         "raydium swap --input-mint So11111111111111111111111111111111111111112 --output-mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 0.001",
         "raydium swap --exact-out --input-mint <mint-a> --output-mint <mint-b> --amount 1.25",
         "QUOTE_ID=$(raydium --json swap --input-mint <mint-a> --output-mint <mint-b> --amount 1.25 | node -pe 'JSON.parse(require(\"fs\").readFileSync(0, \"utf8\")).quoteId')",

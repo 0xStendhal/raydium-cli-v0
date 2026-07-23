@@ -109,13 +109,13 @@ First obtain and validate a quote. JSON execution requires the returned `quoteId
 
 ```bash
 QUOTE_ID="$(raydium --json swap \
-  --input-mint <mint> \
-  --output-mint <mint> \
+  --input-mint <mint-or-symbol> \
+  --output-mint <mint-or-symbol> \
   --amount <number> | node -pe 'JSON.parse(require("fs").readFileSync(0, "utf8")).quoteId')"
 
 printf '%s' "$RAYDIUM_WALLET_PASSWORD" | raydium --json --yes --password-stdin swap --execute \
-  --input-mint <mint> \
-  --output-mint <mint> \
+  --input-mint <mint-or-symbol> \
+  --output-mint <mint-or-symbol> \
   --amount <number> \
   --approve-quote "$QUOTE_ID"
 ```
@@ -123,28 +123,29 @@ printf '%s' "$RAYDIUM_WALLET_PASSWORD" | raydium --json --yes --password-stdin s
 ## Swap
 
 Supports auto-routed Trade API quotes and safe execution, plus direct standard-AMM pool quotes.
+Mint options accept either a mint address or a unique symbol from Raydium APIv3 `/mint/list`, such as `SOL`, `RAY`, or `USDC`.
 
 ```bash
 # Interactive token selection from SOL, USDC, and wallet balances
 raydium swap
 
 # Auto-routed quote (default -- does not sign or send)
-raydium swap --input-mint <mint> --output-mint <mint> --amount 1
+raydium swap --input-mint SOL --output-mint USDC --amount 1
 
 # Exact-output quote (find the maximum input needed for the requested output)
-raydium swap --exact-out --input-mint <mint> --output-mint <mint> --amount 1
+raydium swap --exact-out --input-mint <mint-or-symbol> --output-mint <mint-or-symbol> --amount 1
 
 # Execute an auto-routed swap interactively: builds, simulates, displays a transaction review, then confirms
-raydium swap --execute --input-mint <mint> --output-mint <mint> --amount 1
+raydium swap --execute --input-mint <mint-or-symbol> --output-mint <mint-or-symbol> --amount 1
 
 # Direct standard-AMM pool quote
-raydium swap --pool-id <pool> --input-mint <mint> --amount 1
+raydium swap --pool-id <pool> --input-mint <mint-or-symbol> --amount 1
 
 # Execute an exact-input direct standard-AMM pool swap interactively
-raydium swap --execute --pool-id <pool> --input-mint <mint> --amount 1
+raydium swap --execute --pool-id <pool> --input-mint <mint-or-symbol> --amount 1
 
 # With options
-raydium swap --execute --input-mint <mint> --output-mint <mint> --amount 1 \
+raydium swap --execute --input-mint <mint-or-symbol> --output-mint <mint-or-symbol> --amount 1 \
   --slippage 0.5 --priority-fee 0.000005 --debug
 ```
 
@@ -153,7 +154,7 @@ raydium swap --execute --input-mint <mint> --output-mint <mint> --amount 1 \
 ```bash
 raydium pools list                                    # list all pools
 raydium pools list --type concentrated --limit 20     # filter by type
-raydium pools list --mint-a <mint> --mint-b <mint>    # filter by token pair
+raydium pools list --mint-a SOL --mint-b USDC         # filter by token pair
 ```
 
 ## CLMM (Concentrated Liquidity)
@@ -227,13 +228,13 @@ raydium cpmm configs --devnet                         # devnet configs
 raydium cpmm pool <pool-id>                            # RPC state; indexed API fallback for unsupported layouts
 
 # direct CPMM quote (default)
-raydium cpmm swap --pool-id <pool> --input-mint <mint> --amount 1
+raydium cpmm swap --pool-id <pool> --input-mint <mint-or-symbol> --amount 1
 
 # exact-output CPMM quote
-raydium cpmm swap --pool-id <pool> --exact-out --output-mint <mint> --amount 1
+raydium cpmm swap --pool-id <pool> --exact-out --output-mint <mint-or-symbol> --amount 1
 
 # execute a CPMM swap only after a refreshed quote and local simulation
-raydium cpmm swap --execute --pool-id <pool> --input-mint <mint> --amount 1
+raydium cpmm swap --execute --pool-id <pool> --input-mint <mint-or-symbol> --amount 1
 ```
 
 CPMM swaps use the same 5% slippage and 0.01 SOL priority-fee acknowledgement caps as routed swaps. The CLI has a hard 0.1 SOL maximum priority fee per transaction. Quotes show the enforced minimum output or maximum input; price can still move before a transaction lands.
@@ -244,10 +245,10 @@ CPMM swaps use the same 5% slippage and 0.01 SOL priority-fee acknowledgement ca
 
 ```bash
 # Quote a proportional deposit from one side (default)
-raydium cpmm liquidity add --pool-id <pool> --input-mint <mint> --amount 10
+raydium cpmm liquidity add --pool-id <pool> --input-mint <mint-or-symbol> --amount 10
 
 # Execute after a refreshed quote, simulation, and review
-raydium cpmm liquidity add --execute --pool-id <pool> --input-mint <mint> --amount 10
+raydium cpmm liquidity add --execute --pool-id <pool> --input-mint <mint-or-symbol> --amount 10
 
 # Quote a withdrawal by LP-token amount
 raydium cpmm liquidity remove --pool-id <pool> --lp-amount 1.5

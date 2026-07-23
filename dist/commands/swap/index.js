@@ -16,6 +16,7 @@ const output_1 = require("../../lib/output");
 const raydium_client_1 = require("../../lib/raydium-client");
 const connection_1 = require("../../lib/connection");
 const api_urls_1 = require("../../lib/api-urls");
+const mint_resolver_1 = require("../../lib/mint-resolver");
 const help_1 = require("../../lib/help");
 const explorer_1 = require("../../lib/explorer");
 const safe_transaction_1 = require("../../lib/safe-transaction");
@@ -1051,6 +1052,20 @@ function registerSwapCommands(program) {
             process.exitCode = 1;
             return;
         }
+        try {
+            options.inputMint = await (0, mint_resolver_1.resolveMintAddress)(options.inputMint, { cluster: config.cluster });
+            if (options.outputMint) {
+                options.outputMint = await (0, mint_resolver_1.resolveMintAddress)(options.outputMint, { cluster: config.cluster });
+            }
+            if (options.outputMint && options.inputMint === options.outputMint) {
+                throw new Error("Input and output tokens must be different");
+            }
+        }
+        catch (error) {
+            (0, output_1.logError)(error instanceof Error ? error.message : "Failed to resolve token symbol");
+            process.exitCode = 1;
+            return;
+        }
         const slippageValue = options.slippage ?? String(config["default-slippage"]);
         const priorityFeeValue = options.priorityFee ?? String(config["priority-fee"]);
         let slippagePercent;
@@ -1166,9 +1181,9 @@ function registerSwapCommands(program) {
     swapCommand = program
         .command("swap")
         .description("Swap tokens (omit --pool-id for auto-routing via Trade API)")
-        .option("--input-mint <mint>", "Input token mint (interactive selection when omitted)")
+        .option("--input-mint <mint-or-symbol>", "Input token mint or Raydium APIv3 symbol (interactive selection when omitted)")
         .option("--amount <number>", "Input amount, or requested output with --exact-out")
-        .option("--output-mint <mint>", "Output token mint (required if --pool-id not provided)")
+        .option("--output-mint <mint-or-symbol>", "Output token mint or Raydium APIv3 symbol (required if --pool-id not provided)")
         .addOption(new commander_1.Option("--exact-out", "Treat --amount as the exact output amount")
         .conflicts("poolId"))
         .option("--execute", "Build, simulate, review, and send the quoted swap")
@@ -1200,12 +1215,14 @@ function registerSwapCommands(program) {
         defaults: [
             "Cluster-aware Trade API and RPC behavior follows the configured cluster.",
             "--output-mint is required only when auto-routing without --pool-id.",
+            "Mint options also accept unique symbols from Raydium APIv3 /mint/list, such as SOL, RAY, or USDC.",
             "Slippage above 5% and priority fees above 0.01 SOL require explicit acknowledgement flags.",
             "Use So11111111111111111111111111111111111111112 for SOL.",
             "Run raydium swap --help-all to display routing and safety override options."
         ],
         automation: help_1.AUTOMATION_HELP,
         examples: [
+            "raydium swap --input-mint SOL --output-mint USDC --amount 0.001",
             "raydium swap --input-mint So11111111111111111111111111111111111111112 --output-mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v --amount 0.001",
             "raydium swap --exact-out --input-mint <mint-a> --output-mint <mint-b> --amount 1.25",
             "QUOTE_ID=$(raydium --json swap --input-mint <mint-a> --output-mint <mint-b> --amount 1.25 | node -pe 'JSON.parse(require(\"fs\").readFileSync(0, \"utf8\")).quoteId')",
