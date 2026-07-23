@@ -10,7 +10,7 @@ Use this skill before any workflow that requires signing transactions.
 ## Install
 
 ```bash
-npm install -g github:0xStendhal/raydium-cli-v0
+npm install -g github:0xStendhal/raydium-cli
 ```
 
 ## Configure RPC & Defaults

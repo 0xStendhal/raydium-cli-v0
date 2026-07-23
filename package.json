@@ -1,15 +1,15 @@
 {
-  "name": "raydium-cli-v0",
-  "version": "0.1.1",
+  "name": "raydium-cli",
+  "version": "1.1.0",
   "description": "CLI tool for interacting with Raydium on Solana — swap, manage CLMM/CPMM positions, launch tokens, and more",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xStendhal/raydium-cli-v0.git"
+    "url": "git+https://github.com/0xStendhal/raydium-cli.git"
   },
-  "homepage": "https://github.com/0xStendhal/raydium-cli-v0#readme",
+  "homepage": "https://github.com/0xStendhal/raydium-cli#readme",
   "bugs": {
-    "url": "https://github.com/0xStendhal/raydium-cli-v0/issues"
+    "url": "https://github.com/0xStendhal/raydium-cli/issues"
   },
   "bin": {
     "raydium": "dist/index.js"
