@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerPoolCommands = void 0;
 const raydium_sdk_v2_1 = require("@raydium-io/raydium-sdk-v2");
 const raydium_client_1 = require("../../lib/raydium-client");
+const mint_resolver_1 = require("../../lib/mint-resolver");
 const output_1 = require("../../lib/output");
 /** Compact USD formatting: 1.2M, 3.4K, 950. */
 function formatCompactUsd(value) {
@@ -35,8 +36,8 @@ function registerPoolCommands(program) {
         .command("list")
         .description("List pools")
         .option("--type <type>", "all|standard|concentrated", "all")
-        .option("--mint-a <mint>", "Filter by mint A")
-        .option("--mint-b <mint>", "Filter by mint B")
+        .option("--mint-a <mint-or-symbol>", "Filter by mint A or Raydium APIv3 symbol")
+        .option("--mint-b <mint-or-symbol>", "Filter by mint B or Raydium APIv3 symbol")
         .option("--limit <number>", "Limit results", "100")
         .option("--page <number>", "Deprecated numeric page option; ignored by current Raydium API", "1")
         .option("--next-page-id <id>", "Raydium API cursor for the next page")
@@ -46,6 +47,17 @@ function registerPoolCommands(program) {
         const poolType = mapPoolType(options.type);
         let data;
         if (options.mintA || options.mintB) {
+            try {
+                if (options.mintA)
+                    options.mintA = await (0, mint_resolver_1.resolveMintAddress)(options.mintA, { cluster: raydium.cluster });
+                if (options.mintB)
+                    options.mintB = await (0, mint_resolver_1.resolveMintAddress)(options.mintB, { cluster: raydium.cluster });
+            }
+            catch (error) {
+                (0, output_1.logError)(error instanceof Error ? error.message : "Failed to resolve token symbol");
+                process.exitCode = 1;
+                return;
+            }
             const mintA = options.mintA ?? options.mintB;
             const mintB = options.mintA ? options.mintB : undefined;
             data = await raydium.api.fetchPoolByMints({
