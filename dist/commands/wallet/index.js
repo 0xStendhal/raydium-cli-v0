@@ -17,6 +17,7 @@ const output_1 = require("../../lib/output");
 const help_1 = require("../../lib/help");
 const balances_1 = require("../../lib/balances");
 const token_price_1 = require("../../lib/token-price");
+const mint_resolver_1 = require("../../lib/mint-resolver");
 const SECRET_EXPORTS_DIR = path_1.default.join(paths_1.CONFIG_DIR, "exports");
 const SECRET_EXPORT_DIR_MODE = 0o700;
 const SECRET_EXPORT_FILE_MODE = 0o600;
@@ -288,13 +289,34 @@ function registerWalletCommands(program) {
         // Price lookup (best-effort; empty when no source can price the mints).
         const priceMints = balances.map((item) => item.mint === "SOL" ? WRAPPED_SOL_MINT : item.mint);
         const prices = await (0, token_price_1.getTokenPrices)(priceMints);
+        let mintMetadata = new Map();
+        try {
+            mintMetadata = await (0, mint_resolver_1.getRaydiumMintMetadata)(priceMints, { cluster: config.cluster });
+        }
+        catch {
+            // Token labels are best-effort; keep RPC fallback labels if Raydium metadata is unavailable.
+        }
+        const displayBalance = (item) => {
+            if (item.mint === "SOL")
+                return item;
+            const mint = item.mint === "SOL" ? WRAPPED_SOL_MINT : item.mint;
+            const metadata = mintMetadata.get(mint);
+            return metadata
+                ? {
+                    ...item,
+                    symbol: metadata.symbol || item.symbol,
+                    name: metadata.name || metadata.symbol || item.name
+                }
+                : item;
+        };
+        const displayBalances = balances.map(displayBalance);
         const priceFor = (item) => prices.get(item.mint === "SOL" ? WRAPPED_SOL_MINT : item.mint) ?? null;
         const valueFor = (item) => {
             const price = priceFor(item);
             return price == null ? null : Number(item.amount) * price;
         };
         if ((0, output_1.isJsonOutput)()) {
-            const tokens = balances.map((item) => ({
+            const tokens = displayBalances.map((item) => ({
                 ...item,
                 priceUsd: priceFor(item),
                 valueUsd: valueFor(item)
@@ -305,13 +327,13 @@ function registerWalletCommands(program) {
         }
         (0, output_1.logInfo)(`Wallet: ${walletName}`);
         (0, output_1.logInfo)(`Public key: ${walletAddress}`);
-        if (balances.length === 0) {
+        if (displayBalances.length === 0) {
             (0, output_1.logInfo)("No balances found");
             return;
         }
-        const havePrices = balances.some((item) => priceFor(item) != null);
+        const havePrices = displayBalances.some((item) => priceFor(item) != null);
         // Sort by USD value (desc); keep SOL pinned to the top for orientation.
-        const sorted = [...balances].sort((a, b) => {
+        const sorted = [...displayBalances].sort((a, b) => {
             if (a.mint === "SOL")
                 return -1;
             if (b.mint === "SOL")
@@ -352,7 +374,7 @@ function registerWalletCommands(program) {
                 { header: "Value", align: "right" },
                 { header: "Mint" }
             ], rows);
-            const total = balances.reduce((sum, item) => sum + (valueFor(item) ?? 0), 0);
+            const total = displayBalances.reduce((sum, item) => sum + (valueFor(item) ?? 0), 0);
             (0, output_1.logInfo)("");
             (0, output_1.logInfo)(`Total value: ${chalk_1.default.bold(formatUsd(total))}`);
         }

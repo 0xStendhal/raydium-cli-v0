@@ -2,7 +2,8 @@ import { Command } from "commander";
 import { PoolFetchType } from "@raydium-io/raydium-sdk-v2";
 
 import { loadRaydium } from "../../lib/raydium-client";
-import { isJsonOutput, logInfo, logJson, logTable, withSpinner } from "../../lib/output";
+import { resolveMintAddress } from "../../lib/mint-resolver";
+import { isJsonOutput, logError, logInfo, logJson, logTable, withSpinner } from "../../lib/output";
 
 /** Compact USD formatting: 1.2M, 3.4K, 950. */
 function formatCompactUsd(value: unknown): string {
@@ -36,8 +37,8 @@ export function registerPoolCommands(program: Command): void {
     .command("list")
     .description("List pools")
     .option("--type <type>", "all|standard|concentrated", "all")
-    .option("--mint-a <mint>", "Filter by mint A")
-    .option("--mint-b <mint>", "Filter by mint B")
+    .option("--mint-a <mint-or-symbol>", "Filter by mint A or Raydium APIv3 symbol")
+    .option("--mint-b <mint-or-symbol>", "Filter by mint B or Raydium APIv3 symbol")
     .option("--limit <number>", "Limit results", "100")
     .option("--page <number>", "Deprecated numeric page option; ignored by current Raydium API", "1")
     .option("--next-page-id <id>", "Raydium API cursor for the next page")
@@ -55,6 +56,14 @@ export function registerPoolCommands(program: Command): void {
 
       let data;
       if (options.mintA || options.mintB) {
+        try {
+          if (options.mintA) options.mintA = await resolveMintAddress(options.mintA, { cluster: raydium.cluster });
+          if (options.mintB) options.mintB = await resolveMintAddress(options.mintB, { cluster: raydium.cluster });
+        } catch (error) {
+          logError(error instanceof Error ? error.message : "Failed to resolve token symbol");
+          process.exitCode = 1;
+          return;
+        }
         const mintA = options.mintA ?? options.mintB;
         const mintB = options.mintA ? options.mintB : undefined;
         data = await raydium.api.fetchPoolByMints({
